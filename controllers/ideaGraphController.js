@@ -1,25 +1,37 @@
 // Create or update a user's graph
 import { IdeaGraph } from "../models/ideaGraph.js";
+
 export const saveGraph = async (req, res) => {
   try {
-    const { title, nodes, edges } = req.body;
-    const userId = req.user.id; // from auth middleware
+    const { id, title, nodes, edges } = req.body;
+    const userId = req.user?.id;
 
-    // Find existing or create new
-    let graph = await IdeaGraph.findOne({ user: userId, title });
-    if (graph) {
-      graph.nodes = nodes;
-      graph.edges = edges;
-      graph.updatedAt = new Date();
-      await graph.save();
-    } else {
-      graph = await IdeaGraph.create({ user: userId, title, nodes, edges });
+    // --- validation ---
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
     }
 
-    res.status(200).json({ message: "Graph saved", graph });
+    if (!id) {
+      return res.status(400).json({ error: "Graph ID is required" });
+    }
+
+    // --- find existing graph ---
+    const graph = await IdeaGraph.findOne({ _id: id, user: userId });
+    if (!graph) {
+      return res.status(404).json({ error: "Graph not found" });
+    }
+
+    // --- update existing graph ---
+    if (title) graph.title = title;
+    if (Array.isArray(nodes)) graph.nodes = nodes;
+    if (Array.isArray(edges)) graph.edges = edges;
+    graph.updatedAt = new Date();
+
+    await graph.save();
+
+    return res.status(200).json({ message: "Graph updated", graph });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to save graph" });
+    return res.status(500).json({ error: "Failed to update graph" });
   }
 };
 
@@ -42,6 +54,7 @@ export const getGraphById = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
+    console.log("searching grpahs with", id, userId);
     const graph = await IdeaGraph.findOne({ _id: id, user: userId });
     if (!graph) return res.status(404).json({ error: "Graph not found" });
     res.status(200).json(graph);

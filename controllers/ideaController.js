@@ -1,3 +1,4 @@
+import { IdeaGraph } from "../models/ideaGraph.js";
 import { getOpenAIClient } from "../utils/openaiClient.js";
 import crypto from "crypto";
 
@@ -68,6 +69,12 @@ export async function generateMainIdeas(req, res, next) {
   try {
     if (!validateRequired(req.body, "prompt", res)) return;
     const { prompt } = req.body;
+    const userId = req.user?.id;
+    console.log(req.user);
+
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated !!!" });
+    }
 
     const client = getOpenAIClient();
 
@@ -139,7 +146,18 @@ export async function generateMainIdeas(req, res, next) {
       return res.status(502).json({ error: "Invalid model response format" });
     }
 
-    return res.json({ ideas });
+    // ✅ Create new IdeaGraph document when generating main ideas
+    const graph = await IdeaGraph.create({
+      user: userId,
+      title: prompt,
+      nodes: [],
+      edges: [],
+    });
+
+    // 🧩 Return ideas + graph metadata
+    return res.status(200).json({
+      ideas,
+    });
   } catch (err) {
     return next(err);
   }

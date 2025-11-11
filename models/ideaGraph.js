@@ -5,12 +5,13 @@ const ancestorSchema = new mongoose.Schema(
     title: { type: String, required: true },
     summary: { type: String, default: "" },
   },
-  { _id: false } // prevents auto _id on each ancestor object
+  { _id: false }
 );
 
 const ideaSchema = new mongoose.Schema({
   id: { type: String, required: true },
   type: { type: String, default: "idea" },
+  label: { type: String, default: "" },
   summary: { type: String, default: "" },
 
   position: {
@@ -23,8 +24,24 @@ const ideaSchema = new mongoose.Schema({
     default: [],
   },
 
+  // 💬 Linked chat
+  chatId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Chat",
+    required: false,
+  },
+
+  // 🔗 Parent graph reference (metadata only, for clarity / querying)
+  graphId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "IdeaGraph",
+    required: false,
+  },
+
+  // 🧠 Extra ReactFlow data props
   data: { type: Object, default: {} },
 });
+
 const edgeSchema = new mongoose.Schema({
   id: String,
   source: String,

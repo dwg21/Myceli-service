@@ -1,4 +1,12 @@
-const mongoose = require("mongoose");
+import mongoose from "mongoose";
+
+const ancestorSchema = new mongoose.Schema(
+  {
+    title: { type: String, required: true },
+    summary: { type: String, default: "" },
+  },
+  { _id: false }
+);
 
 const messageSchema = new mongoose.Schema(
   {
@@ -17,36 +25,41 @@ const chatSchema = new mongoose.Schema(
   {
     graphId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Graph", // if you have a Graph model; otherwise use String
-      required: false,
+      ref: "Graph", // optional
     },
     ideaId: {
-      type: String, // reference the idea.id field
-      required: false,
+      type: String, // your idea.id string (not ObjectId)
     },
     title: {
       type: String,
       default: "Untitled Chat",
     },
+    ancestors: {
+      type: [ancestorSchema],
+      default: [],
+    },
+    systemMessage: {
+      role: { type: String, default: "system" },
+      content: { type: String, required: true },
+    },
     messages: {
       type: [messageSchema],
       default: [],
     },
+    chatId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Chat",
+      required: false,
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: false,
-    },
-    createdAt: {
-      type: Date,
-      default: Date.now,
-    },
-    updatedAt: {
-      type: Date,
-      default: Date.now,
+      required: true,
     },
   },
   { timestamps: true }
 );
 
-module.exports = mongoose.model("Chat", chatSchema);
+chatSchema.index({ createdBy: 1, graphId: 1, ideaId: 1 }, { unique: true });
+
+export const Chat = mongoose.model("Chat", chatSchema);

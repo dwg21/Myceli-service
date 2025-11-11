@@ -3,16 +3,14 @@ import {
   generateMainIdeas,
   expandIdea,
 } from "../controllers/ideaController.js";
-import { ideaChat } from "../controllers/chatController.js";
+import { requireAuth } from "../middleware/auth.js";
 
 const router = Router();
 
 // POST /api/generate-main-ideas
-router.post("/generate-main-ideas", generateMainIdeas);
+router.post("/generate-main-ideas", requireAuth, generateMainIdeas);
 
 // POST /api/expand-idea
-router.post("/expand-idea", expandIdea);
-
-router.post("/idea-chat", ideaChat);
+router.post("/expand-idea", requireAuth, expandIdea);
 
 export default router;

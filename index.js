@@ -2,10 +2,10 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
-import mongoose from "mongoose";
 import ideaRoutes from "./routes/ideaRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
+import chatRoutes from "./routes/chatRoutes.js";
 import ideaGraphRoutes from "./routes/ideaGraphRoutes.js";
 import { errorHandler } from "./middleware/error.js";
 import { connectDB } from "./config/db.js"; // ✅ import your DB connector
@@ -39,7 +39,7 @@ app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 
 /* ---------------- Middleware ---------------- */
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
 
 /* ---------------- Routes ---------------- */
@@ -47,6 +47,7 @@ app.use("/api", ideaRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/graphs", ideaGraphRoutes);
+app.use("/api/chats", chatRoutes);
 
 /* ---------------- Error Handler ---------------- */
 app.use(errorHandler);
