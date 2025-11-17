@@ -23,12 +23,28 @@ function createId() {
 
 function coerceIdeasShape(raw, ancestors = []) {
   const ideas = Array.isArray(raw?.ideas) ? raw.ideas : [];
+
   return ideas.map((idea, i) => {
     const label = String(idea?.label || "").trim();
     const summary = String(idea?.summary || "").trim();
 
     // 🚫 Ignore model-provided IDs and generate deterministic ones instead
     const id = makeIdeaId(label || `idea-${i}`, ancestors);
+
+    // --- Normalize follow-up questions ---
+    // Accept a couple of possible keys to be robust to model variations
+    let followUpsRaw =
+      idea?.followUps ||
+      idea?.follow_ups ||
+      idea?.follow_up_questions ||
+      idea?.questions;
+
+    let followUps = [];
+    if (Array.isArray(followUpsRaw)) {
+      followUps = followUpsRaw
+        .map((q) => (typeof q === "string" ? q.trim() : ""))
+        .filter(Boolean);
+    }
 
     // Normalize details (sub-ideas)
     let details = idea?.details;
@@ -49,7 +65,7 @@ function coerceIdeasShape(raw, ancestors = []) {
       details = [];
     }
 
-    return { id, label, summary, details };
+    return { id, label, summary, details, followUps };
   });
 }
 
@@ -81,13 +97,16 @@ export async function generateMainIdeas(req, res, next) {
     const system = [
       "You are Myceli, an expert ideation assistant for a visual mind-map app.",
       "Return concise, practical ideas with brief summaries (50–80 words).",
+      "For each top-level idea, also suggest 3–5 short, natural-language follow-up questions the user could ask to go deeper on that idea.",
+      "The follow-up questions should be specific to the idea, not generic (e.g. prefer 'What types of waves are there?' over 'Tell me more about this idea.').",
       "Always return a strict JSON object matching this schema:",
-      '{ "ideas": [ { "id": "string", "label": "string", "summary": "string", "details": [ { "id": "string", "label": "string" } ] } ] }',
+      '{ "ideas": [ { "id": "string", "label": "string", "summary": "string", "followUps": ["string"], "details": [ { "id": "string", "label": "string" } ] } ] }',
       "Generate 4–6 top-level ideas. For details, return 4–6 sub-ideas as label-only nodes (no summaries).",
       "Do not include Markdown or commentary outside the JSON.",
     ].join(" ");
 
     const user = `User question (respond in JSON): ${prompt}`;
+
     const response = await client.responses.create({
       model: "gpt-4o-mini",
       input: [
@@ -113,33 +132,61 @@ export async function generateMainIdeas(req, res, next) {
     if (ideas.length < 4 || ideas.length > 6) {
       ideas = ideas.slice(0, 6);
       while (ideas.length < 4) {
-        ideas.push({ id: createId(), label: "Idea", summary: "", details: [] });
+        ideas.push({
+          id: createId(),
+          label: "Idea",
+          summary: "",
+          details: [],
+          followUps: [
+            "Explain this idea in simple terms.",
+            "Why is this idea important?",
+            "What are the main challenges with this idea?",
+          ],
+        });
       }
     }
 
-    // Ensure each idea has at least 4 sub-ideas
+    // Ensure each idea has at least 4 sub-ideas, but keep followUps as-is
     ideas = ideas.map((idea) => {
       const details = Array.isArray(idea.details)
         ? idea.details.slice(0, 6)
         : [];
+
+      const paddedDetails =
+        details.length >= 4
+          ? details
+          : details.concat(
+              Array.from({ length: Math.max(0, 4 - details.length) }).map(
+                (_, j) => ({
+                  id: makeIdeaId(`Sub-${j}`, [{ title: idea.label }]),
+                  label: "Sub-idea",
+                })
+              )
+            );
+
+      // Ensure followUps is always an array
+      const followUps = Array.isArray(idea.followUps)
+        ? idea.followUps
+        : [
+            "Explain this idea in simple terms.",
+            "What are some common questions about this topic?",
+            "What are the key subtopics within this idea?",
+          ];
+
       return {
         ...idea,
-        details:
-          details.length >= 4
-            ? details
-            : details.concat(
-                Array.from({ length: Math.max(0, 4 - details.length) }).map(
-                  (_, j) => ({
-                    id: makeIdeaId(`Sub-${j}`, [{ title: idea.label }]),
-                    label: "Sub-idea",
-                  })
-                )
-              ),
+        details: paddedDetails,
+        followUps,
       };
     });
 
     const valid = ideas.every(
-      (i) => i.id && i.label && i.summary && Array.isArray(i.details)
+      (i) =>
+        i.id &&
+        i.label &&
+        i.summary &&
+        Array.isArray(i.details) &&
+        Array.isArray(i.followUps)
     );
 
     if (!valid) {
@@ -154,8 +201,10 @@ export async function generateMainIdeas(req, res, next) {
       edges: [],
     });
 
-    // 🧩 Return ideas + graph metadata
+    // 🧩 Return ideas + graph metadata (now with followUps)
     return res.status(200).json({
+      graphId: graph._id,
+      title: graph.title,
       ideas,
     });
   } catch (err) {
@@ -170,20 +219,16 @@ export async function generateMainIdeas(req, res, next) {
 export async function expandIdea(req, res, next) {
   try {
     console.log("=== expandIdea called ===");
-    console.log("Raw request body:", req.body);
+    const { ideaTitle, ancestors, prompt } = req.body;
 
-    const { ideaTitle, ancestors } = req.body;
-
-    // Validate required fields
+    // --- Validation ---
     if (!ideaTitle?.trim()) {
-      console.error("Error: Missing ideaTitle");
       return res
         .status(400)
         .json({ error: "Missing required field: ideaTitle" });
     }
 
     if (!Array.isArray(ancestors) || ancestors.length < 1) {
-      console.error("Error: Ancestors array missing or empty", ancestors);
       return res.status(400).json({
         error:
           "Missing required field: ancestors (must be an array with at least 1 item)",
@@ -191,18 +236,14 @@ export async function expandIdea(req, res, next) {
     }
 
     if (!ancestors.every((a) => a.title && a.summary)) {
-      console.error("Error: Ancestors missing title or summary", ancestors);
       return res.status(400).json({
         error: "Each ancestor must have 'title' and 'summary' fields",
       });
     }
 
-    console.log("ideaTitle:", ideaTitle);
-    console.log("ancestors:", ancestors);
-
     const client = getOpenAIClient();
 
-    // Build context for model
+    // --- Context formatting ---
     const ancestorsContext = ancestors
       .map(
         (anc, idx) =>
@@ -212,50 +253,71 @@ export async function expandIdea(req, res, next) {
       )
       .join("\n\n");
 
-    const system = [
+    // --- System prompt ---
+    const systemPrompt = [
       "You are Myceli, an expert ideation assistant for a visual mind-map app.",
-      "The ancestors array below shows the hierarchical path from the root question down to this idea's parent.",
-      "Use this full context to generate sub-ideas that are relevant to the entire hierarchy.",
-      "Return concise, practical sub-ideas with brief summaries (50–80 words).",
-      "Always return a strict JSON object matching this schema:",
-      '{ "ideas": [ { "id": "string", "label": "string", "summary": "string", "details": [] } ] }',
-      "Return 4–6 sub-ideas as fully shaped objects. Do not include Markdown or commentary outside the JSON.",
+      "You expand ideas into clear, creative sub-ideas.",
+      "Use the provided ancestry for context and maintain thematic coherence.",
+      "For each sub-idea, also propose 3–7 concise follow-up questions that a curious thinker might ask next.",
+      "Return ONLY valid JSON using this schema:",
+      '{ "ideas": [ { "id": "string", "label": "string", "summary": "string", "details": [], "followUps": ["string", ...] } ] }',
+      "Summaries should be 50–80 words. Do NOT include commentary or markdown outside the JSON.",
     ].join(" ");
 
-    const user = `Expand on the idea title (respond in JSON): ${ideaTitle}\n\nAncestors (hierarchical path from root to parent):\n${ancestorsContext}`;
+    // --- Dynamic user instruction ---
+    const focus = prompt
+      ? `The user wants to focus on this specific question or angle: "${prompt}".`
+      : "No user prompt was given. Expand naturally with relevant sub-ideas.";
 
-    console.log("Sending request to OpenAI model...");
+    const userPrompt = [
+      `Expand on the idea titled "${ideaTitle}".`,
+      focus,
+      "\n\nAncestors (hierarchical path from root to parent):",
+      ancestorsContext,
+    ].join("\n\n");
+
+    console.log("🧠 Sending prompt to model...", { hasCustomPrompt: !!prompt });
+
     const response = await client.responses.create({
       model: "gpt-4o-mini",
       input: [
-        { role: "system", content: system },
-        { role: "user", content: user },
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
       ],
       text: { format: { type: "json_object" } },
       temperature: 0.7,
     });
 
-    console.log("Raw model output text:", response.output_text);
-
     const jsonText = response.output_text || "{}";
     let raw;
     try {
       raw = JSON.parse(jsonText);
-      console.log("Parsed JSON from model:", raw);
     } catch (parseErr) {
-      console.error("Failed to parse model output JSON:", jsonText, parseErr);
+      console.error(
+        "❌ Failed to parse model output JSON:",
+        jsonText,
+        parseErr
+      );
       raw = { ideas: [] };
     }
 
-    // 🧠 Generate deterministic IDs using the full ancestor chain
+    // --- Normalize and shape ideas (reusing the same logic) ---
     let ideas = coerceIdeasShape(raw, ancestors).map((i) => ({
       ...i,
-      details: [],
+      details: [], // we don’t expand sub-ideas further here
+      followUps:
+        Array.isArray(i.followUps) && i.followUps.length >= 3
+          ? i.followUps.slice(0, 7)
+          : [
+              "What assumptions does this idea rely on?",
+              "How could we prototype this quickly?",
+              "Who would benefit most from this idea?",
+              "What are the key risks or trade-offs?",
+              "What resources would this require?",
+            ].slice(0, Math.floor(Math.random() * 5) + 3), // fallback 3–7
     }));
 
-    console.log("Ideas after coercion:", ideas);
-
-    // Enforce 4–6 ideas for structure consistency
+    // --- Enforce 4–6 sub-ideas ---
     if (ideas.length < 4 || ideas.length > 6) {
       ideas = ideas.slice(0, 6);
       while (ideas.length < 4) {
@@ -264,13 +326,22 @@ export async function expandIdea(req, res, next) {
           label: "Sub-idea",
           summary: "",
           details: [],
+          followUps: [
+            "What could make this idea more impactful?",
+            "Who might oppose this idea and why?",
+            "What’s an example use case?",
+          ],
         });
       }
-      console.log("Ideas after enforcing 4–6 count:", ideas);
     }
 
     const valid = ideas.every(
-      (i) => i.id && i.label && i.summary && Array.isArray(i.details)
+      (i) =>
+        i.id &&
+        i.label &&
+        i.summary &&
+        Array.isArray(i.details) &&
+        Array.isArray(i.followUps)
     );
 
     if (!valid) {
@@ -278,7 +349,7 @@ export async function expandIdea(req, res, next) {
       return res.status(502).json({ error: "Invalid model response format" });
     }
 
-    console.log("Returning ideas to client:", ideas);
+    // ✅ Return same consistent shape as generateMainIdeas
     return res.json({ ideas });
   } catch (err) {
     console.error("Unexpected error in expandIdea:", err);
