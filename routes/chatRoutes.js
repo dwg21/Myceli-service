@@ -8,6 +8,7 @@ import {
   getChatById,
   deleteChat,
   sendChatMessage,
+  sendChatMessageStream,
 } from "../controllers/chatController.js";
 import { requireAuth } from "../middleware/auth.js";
 
@@ -21,6 +22,7 @@ router.get("/", getUserChats);
 router.get("/graph/:graphId", getChatsByGraph);
 router.get("/:id", getChatById);
 router.post("/message", sendChatMessage);
+router.post("/send-stream", sendChatMessageStream);
 router.delete("/:id", deleteChat);
 
 export default router;

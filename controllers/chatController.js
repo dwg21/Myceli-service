@@ -1,6 +1,8 @@
 import { getOpenAIClient } from "../utils/openaiClient.js";
 import { Chat } from "../models/Chat.js";
 import { IdeaGraph } from "../models/ideaGraph.js";
+import { streamText } from "ai";
+import { openai } from "@ai-sdk/openai";
 
 /**
  * Starts a new reflection chat for a specific idea.
@@ -298,3 +300,50 @@ export const sendChatMessage = async (req, res) => {
     res.status(500).json({ error: "Failed to send chat message" });
   }
 };
+
+export async function sendChatMessageStream(req, res) {
+  try {
+    const { chatId, content } = req.body;
+    const userId = req.user.id;
+
+    // 1. Load chat
+    const chat = await Chat.findOne({ _id: chatId, createdBy: userId });
+    if (!chat) return res.status(404).json({ error: "Chat not found" });
+
+    // 2. Save the user message
+    chat.messages.push({ role: "user", content });
+    chat.updatedAt = new Date();
+    await chat.save();
+
+    // 3. Build conversation history
+    const messages = [
+      chat.systemMessage,
+      ...chat.messages.map((m) => ({ role: m.role, content: m.content })),
+    ];
+
+    // 4. Start Vercel AI streaming
+    const result = streamText({
+      model: openai("gpt-4o-mini"),
+      messages,
+    });
+
+    // IMPORTANT: set SSE headers manually
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    // 5. Pipe streaming chunks into SSE response
+    await result.pipeTextStreamToResponse(res);
+
+    // 6. Capture full message for DB
+    const fullReply = await result.text;
+
+    chat.messages.push({ role: "assistant", content: fullReply });
+    chat.updatedAt = new Date();
+    await chat.save();
+  } catch (err) {
+    console.error("STREAM ERROR:", err);
+    res.write(`event: error\ndata: Streaming error\n\n`);
+    res.end();
+  }
+}

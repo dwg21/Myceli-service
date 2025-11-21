@@ -9,6 +9,8 @@
     "dev": "nodemon index.js"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^2.0.69",
+    "ai": "^5.0.98",
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
