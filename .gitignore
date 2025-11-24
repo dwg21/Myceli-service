@@ -1,0 +1,65 @@
+# --- Node / Express ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+pnpm-lock.yaml
+
+# --- Environment files ---
+.env
+.env.*.local
+.env.local
+.env.test
+.env.development.local
+.env.production.local
+
+# --- Build outputs / compiled files ---
+dist/
+build/
+tmp/
+temp/
+coverage/
+.cache/
+.next/
+out/
+
+# --- Express specific ---
+logs/
+*.log
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# --- Uploads / Generated files ---
+uploads/
+public/uploads/
+
+# --- OS / Editor ---
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+# IDEs / Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- TypeScript ---
+*.tsbuildinfo
+
+# --- Misc ---
+*.bak
+*.tmp

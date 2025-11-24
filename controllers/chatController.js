@@ -34,7 +34,7 @@ export async function createIdeaChat(req, res, next) {
         .json({ error: "Missing required fields: graphId and ideaId" });
     }
 
-    // --- Check if chat already exists ---
+    // --- Prevent duplicate chats ---
     const existingChat = await Chat.findOne({
       createdBy: userId,
       graphId,
@@ -42,18 +42,13 @@ export async function createIdeaChat(req, res, next) {
     });
 
     if (existingChat) {
-      console.warn(
-        `⚠️ Chat already exists for user:${userId}, graph:${graphId}, idea:${ideaId}`
-      );
       return res.status(409).json({
         error: "A chat for this idea already exists.",
         chatId: existingChat._id,
       });
     }
 
-    const client = getOpenAIClient();
-
-    // --- Build hierarchical context string ---
+    // --- Generate system message (saved, but no assistant call yet) ---
     const ancestorsContext = ancestors
       .map(
         (anc, idx) =>
@@ -63,7 +58,6 @@ export async function createIdeaChat(req, res, next) {
       )
       .join("\n\n");
 
-    // --- System message for LLM behavior ---
     const systemMessage = {
       role: "system",
       content: [
@@ -78,25 +72,7 @@ export async function createIdeaChat(req, res, next) {
       ].join("\n\n"),
     };
 
-    // --- Automatically add a starting user message ---
-    const startingMessage = {
-      role: "user",
-      content: "Please explain this idea in detail.",
-    };
-
-    const chatMessages = [systemMessage, startingMessage];
-
-    // --- Generate first response from OpenAI ---
-    const response = await client.responses.create({
-      model: "gpt-4o-mini",
-      input: chatMessages,
-      text: { format: { type: "text" } },
-      temperature: 0.7,
-    });
-
-    const reply = response.output_text?.trim() || "No response generated.";
-
-    // --- Create new Chat record in Mongo ---
+    // --- Create empty chat (frontend will start first message) ---
     const chat = await Chat.create({
       createdBy: userId,
       graphId,
@@ -104,30 +80,16 @@ export async function createIdeaChat(req, res, next) {
       title: ideaTitle,
       ancestors,
       systemMessage,
-      messages: [startingMessage, { role: "assistant", content: reply }],
+      messages: [],
     });
 
-    // --- Attach chatId to IdeaGraph node ---
-    if (graphId && ideaId) {
-      console.log("🔗 [createIdeaChat] Attaching chatId to IdeaGraph node...");
-      const result = await IdeaGraph.updateOne(
-        { _id: graphId, "nodes.id": ideaId },
-        { $set: { "nodes.$.chatId": chat._id } }
-      );
+    // --- Attach chatId to the graph node ---
+    await IdeaGraph.updateOne(
+      { _id: graphId, "nodes.id": ideaId },
+      { $set: { "nodes.$.chatId": chat._id } }
+    );
 
-      if (result.modifiedCount === 0) {
-        console.warn(
-          "⚠️ [createIdeaChat] No matching node found or no changes applied!"
-        );
-      }
-    } else {
-      console.warn(
-        "⚠️ [createIdeaChat] Missing graphId or ideaId — skipping node update."
-      );
-    }
-
-    // --- Respond with chat and first reply ---
-    return res.status(201).json({ chat, reply });
+    return res.status(201).json({ chat });
   } catch (err) {
     console.error("💥 Error in createIdeaChat:", err);
     next(err);
