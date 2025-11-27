@@ -5,9 +5,11 @@ import {
   login,
   refresh,
   logout,
+  me,
 } from "../controllers/authController.js";
 import { authLimiter } from "../middleware/rateLimit.js";
 import { validate } from "../middleware/validate.js";
+import { requireAuth } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -49,5 +51,8 @@ router.post("/refresh", refresh);
 
 // POST /api/auth/logout
 router.post("/logout", logout);
+
+// GET /api/auth/me
+router.get("/me", requireAuth, me);
 
 export default router;

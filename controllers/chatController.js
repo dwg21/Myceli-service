@@ -42,11 +42,18 @@ export async function createIdeaChat(req, res, next) {
     });
 
     if (existingChat) {
-      return res.status(409).json({
-        error: "A chat for this idea already exists.",
-        chatId: existingChat._id,
-      });
+      // Ensure the graph node is tagged with the chatId (idempotent)
+      await IdeaGraph.updateOne(
+        { _id: graphId, user: userId, "nodes.id": ideaId },
+        { $set: { "nodes.$.chatId": existingChat._id } }
+      );
+
+      return res
+        .status(200)
+        .json({ chat: existingChat, node: { id: ideaId, chatId: existingChat._id } });
     }
+
+    console.log("Contiuning");
 
     // --- Generate system message (saved, but no assistant call yet) ---
     const ancestorsContext = ancestors
@@ -85,11 +92,13 @@ export async function createIdeaChat(req, res, next) {
 
     // --- Attach chatId to the graph node ---
     await IdeaGraph.updateOne(
-      { _id: graphId, "nodes.id": ideaId },
+      { _id: graphId, user: userId, "nodes.id": ideaId },
       { $set: { "nodes.$.chatId": chat._id } }
     );
 
-    return res.status(201).json({ chat });
+    return res
+      .status(201)
+      .json({ chat, node: { id: ideaId, chatId: chat._id } });
   } catch (err) {
     console.error("💥 Error in createIdeaChat:", err);
     next(err);
@@ -294,10 +303,10 @@ export async function sendChatMessageStream(req, res) {
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
-    // 5. Pipe streaming chunks into SSE response
+    // 5. Pipe streaming chunks into SSE response (frontend expects this format)
     await result.pipeTextStreamToResponse(res);
 
-    // 6. Capture full message for DB
+    // 6. Capture full message for DB once streaming completes
     const fullReply = await result.text;
 
     chat.messages.push({ role: "assistant", content: fullReply });

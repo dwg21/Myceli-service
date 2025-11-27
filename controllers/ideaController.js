@@ -58,14 +58,14 @@ function coerceIdeasShape(raw, ancestors = []) {
             dLabel || `sub-${j}`,
             ancestors.concat({ title: label })
           );
-          return dLabel ? { id: dId, label: dLabel } : null;
+          return dLabel ? { id: dId, nodeId: dId, label: dLabel } : null;
         })
         .filter(Boolean);
     } else {
       details = [];
     }
 
-    return { id, label, summary, details, followUps };
+    return { id, nodeId: id, label, summary, details, followUps };
   });
 }
 
@@ -132,8 +132,10 @@ export async function generateMainIdeas(req, res, next) {
     if (ideas.length < 4 || ideas.length > 6) {
       ideas = ideas.slice(0, 6);
       while (ideas.length < 4) {
+        const fallbackId = createId();
         ideas.push({
-          id: createId(),
+          id: fallbackId,
+          nodeId: fallbackId,
           label: "Idea",
           summary: "",
           details: [],
@@ -157,10 +159,14 @@ export async function generateMainIdeas(req, res, next) {
           ? details
           : details.concat(
               Array.from({ length: Math.max(0, 4 - details.length) }).map(
-                (_, j) => ({
-                  id: makeIdeaId(`Sub-${j}`, [{ title: idea.label }]),
-                  label: "Sub-idea",
-                })
+                (_, j) => {
+                  const subId = makeIdeaId(`Sub-${j}`, [{ title: idea.label }]);
+                  return {
+                    id: subId,
+                    nodeId: subId,
+                    label: "Sub-idea",
+                  };
+                }
               )
             );
 
@@ -235,9 +241,15 @@ export async function expandIdea(req, res, next) {
       });
     }
 
-    if (!ancestors.every((a) => a.title && a.summary)) {
+    const missingTitle = ancestors.some((a) => !a?.title);
+    const missingSummaryBeyondRoot = ancestors
+      .slice(1)
+      .some((a) => !a?.summary);
+
+    if (missingTitle || missingSummaryBeyondRoot) {
       return res.status(400).json({
-        error: "Each ancestor must have 'title' and 'summary' fields",
+        error:
+          "Each ancestor needs a title, and all but the first must include a summary",
       });
     }
 
@@ -304,6 +316,7 @@ export async function expandIdea(req, res, next) {
     // --- Normalize and shape ideas (reusing the same logic) ---
     let ideas = coerceIdeasShape(raw, ancestors).map((i) => ({
       ...i,
+      nodeId: i.nodeId || i.id,
       details: [], // we don’t expand sub-ideas further here
       followUps:
         Array.isArray(i.followUps) && i.followUps.length >= 3
@@ -321,8 +334,10 @@ export async function expandIdea(req, res, next) {
     if (ideas.length < 4 || ideas.length > 6) {
       ideas = ideas.slice(0, 6);
       while (ideas.length < 4) {
+        const fallbackId = makeIdeaId(`Fallback-${ideas.length}`, ancestors);
         ideas.push({
-          id: makeIdeaId(`Fallback-${ideas.length}`, ancestors),
+          id: fallbackId,
+          nodeId: fallbackId,
           label: "Sub-idea",
           summary: "",
           details: [],

@@ -149,3 +149,28 @@ export const logout = async (req, res) => {
   res.clearCookie("rt", { path: "/api/auth" });
   res.json({ message: "Logged out successfully" });
 };
+
+/* ---------------- Get current user ---------------- */
+export const me = async (req, res) => {
+  // requireAuth middleware populates req.user
+  if (!req.user?.id) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  try {
+    const user = await User.findById(req.user.id).select("name email role");
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    res.json({
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    });
+  } catch (err) {
+    console.error("Fetch current user error:", err);
+    res.status(500).json({ error: "Failed to fetch user" });
+  }
+};
