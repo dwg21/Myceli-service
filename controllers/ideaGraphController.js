@@ -34,16 +34,13 @@ export const saveGraph = async (req, res) => {
       ? graph.nodes.map((n) => ({
           id: n.id, // client-generated id
           _id: n._id, // Mongo subdocument id
-          chatId:
-            n.chatId ||
-            n.data?.chatId ||
-            (Array.isArray(n.data?.ancestors) && n.data?.chatId) ||
-            undefined,
+          chatId: n.chatId || n.data?.chatId || undefined,
         }))
       : [];
 
     return res.status(200).json({ message: "Graph updated", nodes: nodePatch });
   } catch (err) {
+    console.log(err);
     return res.status(500).json({ error: "Failed to update graph" });
   }
 };

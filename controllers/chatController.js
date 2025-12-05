@@ -4,6 +4,27 @@ import { IdeaGraph } from "../models/ideaGraph.js";
 import { streamText } from "ai";
 import { openai } from "@ai-sdk/openai";
 
+const normalizeHistory = (history, fallbackPrompt = "") => {
+  const originalPrompt =
+    typeof history?.originalPrompt === "string" && history.originalPrompt.trim()
+      ? history.originalPrompt.trim()
+      : fallbackPrompt;
+  const originalContext =
+    typeof history?.originalContext === "string" ? history.originalContext : "";
+  const ancestors = Array.isArray(history?.ancestors)
+    ? history.ancestors
+        .map((a) => ({
+          kind: a?.kind === "question" ? "question" : "idea",
+          title: typeof a?.title === "string" ? a.title.trim() : "",
+          summary: typeof a?.summary === "string" ? a.summary : "",
+          nodeId: typeof a?.nodeId === "string" ? a.nodeId : null,
+        }))
+        .filter((a) => a.title)
+    : [];
+
+  return { originalPrompt, originalContext, ancestors };
+};
+
 /**
  * Starts a new reflection chat for a specific idea.
  * Builds context from ancestors, generates system message, and automatically
@@ -11,7 +32,7 @@ import { openai } from "@ai-sdk/openai";
  */
 export async function createIdeaChat(req, res, next) {
   try {
-    const { ideaTitle, ancestors = [], graphId, ideaId } = req.body;
+    const { ideaTitle, history: rawHistory, graphId, ideaId } = req.body;
     const userId = req.user.id;
 
     // --- Validation ---
@@ -21,10 +42,10 @@ export async function createIdeaChat(req, res, next) {
         .json({ error: "Missing required field: ideaTitle" });
     }
 
-    if (!Array.isArray(ancestors) || ancestors.length < 1) {
+    const history = normalizeHistory(rawHistory, ideaTitle);
+    if (!history.originalPrompt) {
       return res.status(400).json({
-        error:
-          "Missing required field: ancestors (must be an array with at least 1 item)",
+        error: "Missing required field: history.originalPrompt",
       });
     }
 
@@ -48,21 +69,27 @@ export async function createIdeaChat(req, res, next) {
         { $set: { "nodes.$.chatId": existingChat._id } }
       );
 
-      return res
-        .status(200)
-        .json({ chat: existingChat, node: { id: ideaId, chatId: existingChat._id } });
+      return res.status(200).json({
+        chat: existingChat,
+        node: { id: ideaId, chatId: existingChat._id },
+      });
     }
 
     console.log("Contiuning");
 
     // --- Generate system message (saved, but no assistant call yet) ---
-    const ancestorsContext = ancestors
-      .map(
-        (anc, idx) =>
-          `${idx === 0 ? "Root question" : `Level ${idx} idea`}: ${anc.title}${
-            anc.summary ? `\nSummary: ${anc.summary}` : ""
-          }`
-      )
+    const historyContext = [
+      `Original prompt: ${history.originalPrompt}`,
+      history.originalContext ? `Original context: ${history.originalContext}` : null,
+      ...history.ancestors.map((anc, idx) => {
+        const label =
+          anc.kind === "question" ? `Follow-up ${idx + 1}` : `Idea ${idx + 1}`;
+        return `${label}: ${anc.title}${
+          anc.summary ? `\nSummary: ${anc.summary}` : ""
+        }`;
+      }),
+    ]
+      .filter(Boolean)
       .join("\n\n");
 
     const systemMessage = {
@@ -74,7 +101,7 @@ export async function createIdeaChat(req, res, next) {
         "Be thoughtful, structured, and concise but conversational.",
         "Do not output JSON — respond in natural text.",
         "Context below gives you the full ancestry leading to this idea:",
-        ancestorsContext,
+        historyContext,
         `\nCurrent idea: ${ideaTitle}`,
       ].join("\n\n"),
     };
@@ -85,7 +112,7 @@ export async function createIdeaChat(req, res, next) {
       graphId,
       ideaId,
       title: ideaTitle,
-      ancestors,
+      history,
       systemMessage,
       messages: [],
     });
@@ -111,7 +138,7 @@ export async function createIdeaChat(req, res, next) {
  */
 export const saveChat = async (req, res) => {
   try {
-    const { chatId, messages, title, ancestors } = req.body;
+    const { chatId, messages, title, history: rawHistory } = req.body;
     const userId = req.user.id;
 
     // --- Validate input ---
@@ -132,8 +159,11 @@ export const saveChat = async (req, res) => {
     if (Array.isArray(messages) && messages.length > 0) {
       chat.messages = messages;
     }
-    if (Array.isArray(ancestors) && ancestors.length > 0) {
-      chat.ancestors = ancestors;
+    if (rawHistory) {
+      chat.history = normalizeHistory(
+        rawHistory,
+        chat.history?.originalPrompt || chat.title
+      );
     }
 
     chat.updatedAt = new Date();
@@ -154,7 +184,7 @@ export const getUserChats = async (req, res) => {
     const userId = req.user.id;
     const chats = await Chat.find({ createdBy: userId })
       .sort({ updatedAt: -1 })
-      .select("title graphId ideaId updatedAt");
+      .select("title graphId ideaId updatedAt history");
 
     res.status(200).json({ chats });
   } catch (err) {

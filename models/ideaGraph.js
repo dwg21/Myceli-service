@@ -1,9 +1,20 @@
 import mongoose from "mongoose";
 
-const ancestorSchema = new mongoose.Schema(
+const historyItemSchema = new mongoose.Schema(
   {
+    kind: { type: String, enum: ["question", "idea"], required: true },
     title: { type: String, required: true },
     summary: { type: String, default: "" },
+    nodeId: { type: String, default: null },
+  },
+  { _id: false }
+);
+
+const historySchema = new mongoose.Schema(
+  {
+    originalPrompt: { type: String, required: true },
+    originalContext: { type: String, default: "" },
+    ancestors: { type: [historyItemSchema], default: [] },
   },
   { _id: false }
 );
@@ -13,16 +24,16 @@ const ideaSchema = new mongoose.Schema({
   type: { type: String, default: "idea" },
   label: { type: String, default: "" },
   summary: { type: String, default: "" },
+  imageUrl: { type: String, default: "" },
+  promptUsed: { type: String, default: "" },
+  extraContext: { type: String, default: "" },
+  sourceIdeaId: { type: String, default: "" },
 
   position: {
     x: { type: Number, default: 0 },
     y: { type: Number, default: 0 },
   },
 
-  ancestors: {
-    type: [ancestorSchema],
-    default: [],
-  },
 
   // 💬 Linked chat
   chatId: {

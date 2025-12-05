@@ -7,8 +7,13 @@ import crypto from "crypto";
 /* -------------------------------------------------------------------------- */
 
 // Deterministic hash-based ID (same label + ancestry → same ID)
-function makeIdeaId(label, ancestors = []) {
-  const key = `${label}-${ancestors.map((a) => a.title).join("-")}`;
+function makeIdeaId(label, ancestry = []) {
+  const titles = Array.isArray(ancestry)
+    ? ancestry
+        .map((a) => (typeof a === "string" ? a : a?.title || ""))
+        .filter(Boolean)
+    : [];
+  const key = `${label}-${titles.join("-")}`;
   return crypto.createHash("md5").update(key).digest("hex").slice(0, 10);
 }
 
@@ -21,7 +26,55 @@ function createId() {
 /*                           SHAPE / VALIDATION HELPERS                       */
 /* -------------------------------------------------------------------------- */
 
-function coerceIdeasShape(raw, ancestors = []) {
+function normalizeHistory(history, fallbackPrompt = "") {
+  const originalPrompt =
+    typeof history?.originalPrompt === "string" && history.originalPrompt.trim()
+      ? history.originalPrompt.trim()
+      : fallbackPrompt;
+  const originalContext =
+    typeof history?.originalContext === "string" ? history.originalContext : "";
+
+  const ancestors = Array.isArray(history?.ancestors)
+    ? history.ancestors
+        .map((a) => ({
+          kind: a?.kind === "question" ? "question" : "idea",
+          title: typeof a?.title === "string" ? a.title.trim() : "",
+          summary: typeof a?.summary === "string" ? a.summary : "",
+          nodeId: typeof a?.nodeId === "string" ? a.nodeId : null,
+        }))
+        .filter((a) => a.title)
+    : [];
+
+  return {
+    originalPrompt,
+    originalContext,
+    ancestors,
+  };
+}
+
+const appendHistory = (history, item) => {
+  const normalized = normalizeHistory(history, history?.originalPrompt || "");
+  const nextAncestors = Array.isArray(normalized.ancestors)
+    ? [...normalized.ancestors]
+    : [];
+  const last = nextAncestors[nextAncestors.length - 1];
+  if (last && last.kind === item.kind && last.title === item.title) {
+    return normalized;
+  }
+  nextAncestors.push(item);
+  return { ...normalized, ancestors: nextAncestors };
+};
+
+const getLineageTitles = (history) => {
+  const normalized = normalizeHistory(history, history?.originalPrompt || "");
+  return [
+    normalized.originalPrompt,
+    ...normalized.ancestors.map((a) => a.title),
+  ].filter(Boolean);
+};
+
+function coerceIdeasShape(raw, history) {
+  const lineage = getLineageTitles(history);
   const ideas = Array.isArray(raw?.ideas) ? raw.ideas : [];
 
   return ideas.map((idea, i) => {
@@ -29,7 +82,7 @@ function coerceIdeasShape(raw, ancestors = []) {
     const summary = String(idea?.summary || "").trim();
 
     // 🚫 Ignore model-provided IDs and generate deterministic ones instead
-    const id = makeIdeaId(label || `idea-${i}`, ancestors);
+    const id = makeIdeaId(label || `idea-${i}`, lineage);
 
     // --- Normalize follow-up questions ---
     // Accept a couple of possible keys to be robust to model variations
@@ -54,10 +107,7 @@ function coerceIdeasShape(raw, ancestors = []) {
           if (!d) return null;
           const dLabel =
             typeof d === "string" ? d.trim() : d.label?.trim() || "";
-          const dId = makeIdeaId(
-            dLabel || `sub-${j}`,
-            ancestors.concat({ title: label })
-          );
+          const dId = makeIdeaId(dLabel || `sub-${j}`, lineage.concat(label));
           return dLabel ? { id: dId, nodeId: dId, label: dLabel } : null;
         })
         .filter(Boolean);
@@ -85,6 +135,8 @@ export async function generateMainIdeas(req, res, next) {
   try {
     if (!validateRequired(req.body, "prompt", res)) return;
     const { prompt } = req.body;
+    const context =
+      typeof req.body?.context === "string" ? req.body.context.trim() : "";
     const userId = req.user?.id;
     console.log(req.user);
 
@@ -99,13 +151,19 @@ export async function generateMainIdeas(req, res, next) {
       "Return concise, practical ideas with brief summaries (50–80 words).",
       "For each top-level idea, also suggest 3–5 short, natural-language follow-up questions the user could ask to go deeper on that idea.",
       "The follow-up questions should be specific to the idea, not generic (e.g. prefer 'What types of waves are there?' over 'Tell me more about this idea.').",
+      "When the user provides additional context, use it to tailor the ideas and avoid generic suggestions.",
       "Always return a strict JSON object matching this schema:",
       '{ "ideas": [ { "id": "string", "label": "string", "summary": "string", "followUps": ["string"], "details": [ { "id": "string", "label": "string" } ] } ] }',
       "Generate 4–6 top-level ideas. For details, return 4–6 sub-ideas as label-only nodes (no summaries).",
       "Do not include Markdown or commentary outside the JSON.",
     ].join(" ");
 
-    const user = `User question (respond in JSON): ${prompt}`;
+    const userParts = [`User question (respond in JSON): ${prompt}`];
+    if (context) {
+      userParts.push(`Additional context to honor: ${context}`);
+    }
+
+    const user = userParts.join("\n\n");
 
     const response = await client.responses.create({
       model: "gpt-4o-mini",
@@ -125,15 +183,32 @@ export async function generateMainIdeas(req, res, next) {
       raw = { ideas: [] };
     }
 
+    const baseHistory = normalizeHistory(
+      {
+        originalPrompt: prompt,
+        originalContext: context,
+        ancestors: [],
+      },
+      prompt
+    );
+
     // 🧠 Generate deterministic IDs using the root prompt as ancestry
-    let ideas = coerceIdeasShape(raw, [{ title: prompt }]);
+    let ideas = coerceIdeasShape(raw, baseHistory).map((idea) => ({
+      ...idea,
+      history: appendHistory(baseHistory, {
+        kind: "idea",
+        title: idea.label,
+        summary: idea.summary,
+        nodeId: idea.id,
+      }),
+    }));
 
     // Enforce 4–6 ideas if model under/over-produces
     if (ideas.length < 4 || ideas.length > 6) {
       ideas = ideas.slice(0, 6);
       while (ideas.length < 4) {
         const fallbackId = createId();
-        ideas.push({
+        const fallbackIdea = {
           id: fallbackId,
           nodeId: fallbackId,
           label: "Idea",
@@ -144,7 +219,14 @@ export async function generateMainIdeas(req, res, next) {
             "Why is this idea important?",
             "What are the main challenges with this idea?",
           ],
+        };
+        fallbackIdea.history = appendHistory(baseHistory, {
+          kind: "idea",
+          title: fallbackIdea.label,
+          summary: fallbackIdea.summary,
+          nodeId: fallbackId,
         });
+        ideas.push(fallbackIdea);
       }
     }
 
@@ -160,7 +242,12 @@ export async function generateMainIdeas(req, res, next) {
           : details.concat(
               Array.from({ length: Math.max(0, 4 - details.length) }).map(
                 (_, j) => {
-                  const subId = makeIdeaId(`Sub-${j}`, [{ title: idea.label }]);
+                  const subId = makeIdeaId(
+                    `Sub-${j}`,
+                    getLineageTitles(idea.history || baseHistory).concat(
+                      idea.label
+                    )
+                  );
                   return {
                     id: subId,
                     nodeId: subId,
@@ -225,7 +312,7 @@ export async function generateMainIdeas(req, res, next) {
 export async function expandIdea(req, res, next) {
   try {
     console.log("=== expandIdea called ===");
-    const { ideaTitle, ancestors, prompt } = req.body;
+    const { ideaTitle, history: rawHistory, prompt } = req.body;
 
     // --- Validation ---
     if (!ideaTitle?.trim()) {
@@ -234,36 +321,32 @@ export async function expandIdea(req, res, next) {
         .json({ error: "Missing required field: ideaTitle" });
     }
 
-    if (!Array.isArray(ancestors) || ancestors.length < 1) {
+    const incomingHistory = normalizeHistory(rawHistory, ideaTitle);
+    if (!incomingHistory.originalPrompt) {
       return res.status(400).json({
-        error:
-          "Missing required field: ancestors (must be an array with at least 1 item)",
-      });
-    }
-
-    const missingTitle = ancestors.some((a) => !a?.title);
-    const missingSummaryBeyondRoot = ancestors
-      .slice(1)
-      .some((a) => !a?.summary);
-
-    if (missingTitle || missingSummaryBeyondRoot) {
-      return res.status(400).json({
-        error:
-          "Each ancestor needs a title, and all but the first must include a summary",
+        error: "Missing required field: history.originalPrompt",
       });
     }
 
     const client = getOpenAIClient();
 
-    // --- Context formatting ---
-    const ancestorsContext = ancestors
-      .map(
-        (anc, idx) =>
-          `${idx === 0 ? "Root question" : `Level ${idx} idea`}: ${anc.title}${
-            anc.summary ? `\nSummary: ${anc.summary}` : ""
-          }`
-      )
-      .join("\n\n");
+    // --- History + context preparation ---
+    const historyWithPrompt =
+      prompt && prompt.trim()
+        ? appendHistory(incomingHistory, {
+            kind: "question",
+            title: prompt.trim(),
+            summary: "",
+          })
+        : incomingHistory;
+
+    const historyLines = historyWithPrompt.ancestors.map((anc, idx) => {
+      const label =
+        anc.kind === "question" ? `Follow-up ${idx + 1}` : `Idea ${idx + 1}`;
+      return `${label}: ${anc.title}${
+        anc.summary ? `\nSummary: ${anc.summary}` : ""
+      }`;
+    });
 
     // --- System prompt ---
     const systemPrompt = [
@@ -282,11 +365,19 @@ export async function expandIdea(req, res, next) {
       : "No user prompt was given. Expand naturally with relevant sub-ideas.";
 
     const userPrompt = [
-      `Expand on the idea titled "${ideaTitle}".`,
+      `Original prompt: ${historyWithPrompt.originalPrompt}`,
+      historyWithPrompt.originalContext
+        ? `Original context to honor: ${historyWithPrompt.originalContext}`
+        : null,
+      historyLines.length
+        ? `History (oldest → newest):\n${historyLines.join("\n\n")}`
+        : "History: none recorded beyond the original prompt.",
+      `Current idea to expand: "${ideaTitle}".`,
       focus,
-      "\n\nAncestors (hierarchical path from root to parent):",
-      ancestorsContext,
-    ].join("\n\n");
+      "Expand with 4–6 sub-ideas grounded in the original prompt/context and the full history above.",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
 
     console.log("🧠 Sending prompt to model...", { hasCustomPrompt: !!prompt });
 
@@ -314,28 +405,41 @@ export async function expandIdea(req, res, next) {
     }
 
     // --- Normalize and shape ideas (reusing the same logic) ---
-    let ideas = coerceIdeasShape(raw, ancestors).map((i) => ({
-      ...i,
-      nodeId: i.nodeId || i.id,
-      details: [], // we don’t expand sub-ideas further here
-      followUps:
-        Array.isArray(i.followUps) && i.followUps.length >= 3
-          ? i.followUps.slice(0, 7)
-          : [
-              "What assumptions does this idea rely on?",
-              "How could we prototype this quickly?",
-              "Who would benefit most from this idea?",
-              "What are the key risks or trade-offs?",
-              "What resources would this require?",
-            ].slice(0, Math.floor(Math.random() * 5) + 3), // fallback 3–7
-    }));
+    let ideas = coerceIdeasShape(raw, historyWithPrompt).map((i) => {
+      const ideaHistory = appendHistory(historyWithPrompt, {
+        kind: "idea",
+        title: i.label,
+        summary: i.summary,
+        nodeId: i.id,
+      });
+
+      return {
+        ...i,
+        nodeId: i.nodeId || i.id,
+        history: ideaHistory,
+        details: [], // we don’t expand sub-ideas further here
+        followUps:
+          Array.isArray(i.followUps) && i.followUps.length >= 3
+            ? i.followUps.slice(0, 7)
+            : [
+                "What assumptions does this idea rely on?",
+                "How could we prototype this quickly?",
+                "Who would benefit most from this idea?",
+                "What are the key risks or trade-offs?",
+                "What resources would this require?",
+              ].slice(0, Math.floor(Math.random() * 5) + 3), // fallback 3–7
+      };
+    });
 
     // --- Enforce 4–6 sub-ideas ---
     if (ideas.length < 4 || ideas.length > 6) {
       ideas = ideas.slice(0, 6);
       while (ideas.length < 4) {
-        const fallbackId = makeIdeaId(`Fallback-${ideas.length}`, ancestors);
-        ideas.push({
+        const fallbackId = makeIdeaId(
+          `Fallback-${ideas.length}`,
+          getLineageTitles(historyWithPrompt)
+        );
+        const fallbackIdea = {
           id: fallbackId,
           nodeId: fallbackId,
           label: "Sub-idea",
@@ -346,7 +450,14 @@ export async function expandIdea(req, res, next) {
             "Who might oppose this idea and why?",
             "What’s an example use case?",
           ],
+        };
+        fallbackIdea.history = appendHistory(historyWithPrompt, {
+          kind: "idea",
+          title: fallbackIdea.label,
+          summary: fallbackIdea.summary,
+          nodeId: fallbackId,
         });
+        ideas.push(fallbackIdea);
       }
     }
 
@@ -368,6 +479,72 @@ export async function expandIdea(req, res, next) {
     return res.json({ ideas });
   } catch (err) {
     console.error("Unexpected error in expandIdea:", err);
+    return next(err);
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*                           GENERATE IDEA IMAGE                              */
+/* -------------------------------------------------------------------------- */
+
+export async function generateIdeaImage(req, res, next) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const ideaTitle =
+      typeof req.body?.ideaTitle === "string" ? req.body.ideaTitle.trim() : "";
+    const ideaSummary =
+      typeof req.body?.ideaSummary === "string"
+        ? req.body.ideaSummary.trim()
+        : "";
+    const extraContext =
+      typeof req.body?.extraContext === "string"
+        ? req.body.extraContext.trim()
+        : "";
+
+    if (!ideaTitle) {
+      return res
+        .status(400)
+        .json({ error: "Missing required field: ideaTitle" });
+    }
+
+    const promptParts = [
+      `Create a single, high-quality illustrative image for the idea: "${ideaTitle}".`,
+      ideaSummary ? `Key details: ${ideaSummary}` : null,
+      extraContext ? `User-provided creative direction: ${extraContext}` : null,
+      "Avoid adding any text in the image. Prefer a clean, modern style. Aspect ratio 1:1. Natural lighting. High detail.",
+    ].filter(Boolean);
+
+    const prompt = promptParts.join("\n");
+    const client = getOpenAIClient();
+
+    const response = await client.images.generate({
+      model: "gpt-image-1",
+      prompt,
+      size: "1024x1024",
+      quality: "high",
+      n: 1,
+    });
+
+    const imageData = response?.data?.[0];
+    const imageUrl =
+      (imageData?.b64_json && `data:image/png;base64,${imageData.b64_json}`) ||
+      imageData?.url;
+    if (!imageUrl) {
+      return res.status(502).json({
+        error: "Image generation failed: no image returned",
+      });
+    }
+
+    return res.status(200).json({
+      imageUrl,
+      promptUsed: prompt,
+    });
+  } catch (err) {
+    console.error("Unexpected error in generateIdeaImage:", err);
     return next(err);
   }
 }
