@@ -1,27 +1,12 @@
-import jwt from "jsonwebtoken";
-import ms from "ms";
 import User from "../models/User.js";
-import RefreshToken from "../models/RefreshToken.js";
-import { sha256 } from "../utils/crypto.js";
 import { env } from "../config/env.js";
-
-/* ---------------- Helper functions ---------------- */
-
-const signAccessToken = (payload) =>
-  jwt.sign(payload, env.accessSecret, { expiresIn: env.accessTtl });
-
-const signRefreshToken = (payload) =>
-  jwt.sign(payload, env.refreshSecret, { expiresIn: env.refreshTtl });
-
-const setRefreshCookie = (res, token) => {
-  res.cookie("rt", token, {
-    httpOnly: true,
-    secure: env.isProd,
-    sameSite: "lax",
-    path: "/api/auth",
-    maxAge: ms(env.refreshTtl),
-  });
-};
+import {
+  issueTokensForUser,
+  rotateRefreshToken,
+  revokeRefreshToken,
+  setRefreshCookie,
+} from "../services/tokenService.js";
+import jwt from "jsonwebtoken";
 
 /* ---------------- Signup ---------------- */
 export const signup = async (req, res) => {
@@ -33,15 +18,10 @@ export const signup = async (req, res) => {
 
     const user = await User.create({ name, email, password });
 
-    const accessToken = signAccessToken({ sub: user.id, role: user.role });
-    const refreshToken = signRefreshToken({ sub: user.id, role: user.role });
-
-    await RefreshToken.create({
-      user: user._id,
-      tokenHash: sha256(refreshToken),
-      expiresAt: new Date(Date.now() + ms(env.refreshTtl)),
-    });
-
+    const { accessToken, refreshToken } = await issueTokensForUser(
+      user,
+      req
+    );
     setRefreshCookie(res, refreshToken);
     res.json({
       accessToken,
@@ -67,15 +47,10 @@ export const login = async (req, res) => {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    const accessToken = signAccessToken({ sub: user.id, role: user.role });
-    const refreshToken = signRefreshToken({ sub: user.id, role: user.role });
-
-    await RefreshToken.create({
-      user: user._id,
-      tokenHash: sha256(refreshToken),
-      expiresAt: new Date(Date.now() + ms(env.refreshTtl)),
-    });
-
+    const { accessToken, refreshToken } = await issueTokensForUser(
+      user,
+      req
+    );
     setRefreshCookie(res, refreshToken);
     res.json({
       accessToken,
@@ -99,33 +74,12 @@ export const refresh = async (req, res) => {
 
   try {
     const decoded = jwt.verify(rt, env.refreshSecret);
-    const tokenDoc = await RefreshToken.findOne({
-      user: decoded.sub,
-      tokenHash: sha256(rt),
-      revokedAt: null,
-    });
-
-    if (!tokenDoc || tokenDoc.expiresAt < new Date()) {
-      return res
-        .status(401)
-        .json({ error: "Invalid or expired refresh token" });
+    const rotated = await rotateRefreshToken(rt, decoded, req);
+    if (!rotated) {
+      return res.status(401).json({ error: "Invalid or expired refresh token" });
     }
-
-    // Rotate
-    tokenDoc.revokedAt = new Date();
-    const newRt = signRefreshToken({ sub: decoded.sub, role: decoded.role });
-    tokenDoc.replacedByTokenHash = sha256(newRt);
-    await tokenDoc.save();
-
-    await RefreshToken.create({
-      user: decoded.sub,
-      tokenHash: sha256(newRt),
-      expiresAt: new Date(Date.now() + ms(env.refreshTtl)),
-    });
-
-    setRefreshCookie(res, newRt);
-    const newAt = signAccessToken({ sub: decoded.sub, role: decoded.role });
-    res.json({ accessToken: newAt });
+    setRefreshCookie(res, rotated.refreshToken);
+    res.json({ accessToken: rotated.accessToken });
   } catch (err) {
     console.error("Refresh error:", err);
     res.status(401).json({ error: "Refresh failed" });
@@ -136,15 +90,7 @@ export const refresh = async (req, res) => {
 export const logout = async (req, res) => {
   const rt = req.cookies?.rt;
   if (rt) {
-    try {
-      const decoded = jwt.verify(rt, env.refreshSecret);
-      await RefreshToken.updateOne(
-        { user: decoded.sub, tokenHash: sha256(rt) },
-        { revokedAt: new Date() }
-      );
-    } catch {
-      /* ignore invalid token */
-    }
+    await revokeRefreshToken(rt);
   }
   res.clearCookie("rt", { path: "/api/auth" });
   res.json({ message: "Logged out successfully" });

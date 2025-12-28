@@ -7,6 +7,12 @@ import {
   logout,
   me,
 } from "../controllers/authController.js";
+import {
+  googleAuth,
+  googleCallback,
+  githubAuth,
+  githubCallback,
+} from "../controllers/oauthController.js";
 import { authLimiter } from "../middleware/rateLimit.js";
 import { validate } from "../middleware/validate.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -54,5 +60,13 @@ router.post("/logout", logout);
 
 // GET /api/auth/me
 router.get("/me", requireAuth, me);
+
+// OAuth: Google
+router.get("/google", googleAuth);
+router.get("/google/callback", googleCallback);
+
+// OAuth: GitHub
+router.get("/github", githubAuth);
+router.get("/github/callback", githubCallback);
 
 export default router;

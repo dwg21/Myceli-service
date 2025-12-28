@@ -13,4 +13,11 @@ export const env = {
   refreshSecret: requireEnv("JWT_REFRESH_SECRET"),
   accessTtl: process.env.ACCESS_TOKEN_TTL || "15m",
   refreshTtl: process.env.REFRESH_TOKEN_TTL || "30d",
+  googleClientId: process.env.GOOGLE_CLIENT_ID,
+  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
+  googleRedirectUri: process.env.GOOGLE_REDIRECT_URI,
+  githubClientId: process.env.GITHUB_CLIENT_ID,
+  githubClientSecret: process.env.GITHUB_CLIENT_SECRET,
+  githubRedirectUri: process.env.GITHUB_REDIRECT_URI,
+  frontendUrl: process.env.FRONTEND_URL || process.env.CORS_ORIGIN,
 };
