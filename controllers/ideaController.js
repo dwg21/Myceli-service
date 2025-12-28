@@ -334,7 +334,7 @@ export async function expandIdea(req, res, next) {
       mode === "ask"
         ? {
             minIdeas: 1,
-            maxIdeas: 3,
+            maxIdeas: 1,
             followUpsMin: 2,
             followUpsMax: 4,
             fallbackFollowUps: [
@@ -344,7 +344,7 @@ export async function expandIdea(req, res, next) {
               "Who could quickly validate this?",
             ],
             countInstruction:
-              "Provide 1–3 concise answers or angles. Only include multiple items if they are distinct; otherwise return one strong answer.",
+              "Provide one concise, strong answer (do not list multiple).",
             summaryHint:
               "Summaries should be 30–60 words and may directly answer the question.",
             fallbackLabel: "Answer",
