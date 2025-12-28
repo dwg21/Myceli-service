@@ -49,9 +49,11 @@ export const saveGraph = async (req, res) => {
 export const getUserGraphs = async (req, res) => {
   try {
     const userId = req.user.id;
-    const graphs = await IdeaGraph.find({ user: userId }).sort({
-      updatedAt: -1,
-    });
+
+    const graphs = await IdeaGraph.find({ user: userId })
+      .sort({ updatedAt: -1 })
+      .select("_id id title updatedAt");
+
     res.status(200).json({ graphs });
   } catch (err) {
     console.error(err);

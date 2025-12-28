@@ -39,7 +39,8 @@ app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 
 /* ---------------- Middleware ---------------- */
-app.use(express.json({ limit: "10mb" }));
+// Bump JSON limit so graph saves with embedded image data URIs don't blow up
+app.use(express.json({ limit: "25mb" }));
 app.use(cookieParser());
 
 /* ---------------- Routes ---------------- */

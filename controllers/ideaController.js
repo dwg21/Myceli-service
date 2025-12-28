@@ -313,6 +313,8 @@ export async function expandIdea(req, res, next) {
   try {
     console.log("=== expandIdea called ===");
     const { ideaTitle, history: rawHistory, prompt } = req.body;
+    const rawMode = typeof req.body?.mode === "string" ? req.body.mode : "";
+    const mode = rawMode === "ask" ? "ask" : "expand";
 
     // --- Validation ---
     if (!ideaTitle?.trim()) {
@@ -327,6 +329,62 @@ export async function expandIdea(req, res, next) {
         error: "Missing required field: history.originalPrompt",
       });
     }
+
+    const modeConfig =
+      mode === "ask"
+        ? {
+            minIdeas: 1,
+            maxIdeas: 3,
+            followUpsMin: 2,
+            followUpsMax: 4,
+            fallbackFollowUps: [
+              "What detail would make this clearer?",
+              "Which assumption should we verify first?",
+              "What is the simplest next step?",
+              "Who could quickly validate this?",
+            ],
+            countInstruction:
+              "Provide 1–3 concise answers or angles. Only include multiple items if they are distinct; otherwise return one strong answer.",
+            summaryHint:
+              "Summaries should be 30–60 words and may directly answer the question.",
+            fallbackLabel: "Answer",
+            fallbackSummary: "A concise answer to the user's question.",
+          }
+        : {
+            minIdeas: 4,
+            maxIdeas: 6,
+            followUpsMin: 3,
+            followUpsMax: 7,
+            fallbackFollowUps: [
+              "What assumptions does this idea rely on?",
+              "How could we prototype this quickly?",
+              "Who would benefit most from this idea?",
+              "What are the key risks or trade-offs?",
+              "What resources would this require?",
+            ],
+            countInstruction:
+              "Expand with 4–6 sub-ideas grounded in the original prompt/context and the full history above.",
+            summaryHint: "Summaries should be 50–80 words.",
+            fallbackLabel: "Sub-idea",
+            fallbackSummary: "A concise sub-idea to extend this topic.",
+          };
+
+    const ensureFollowUps = (list) => {
+      const cleaned = Array.isArray(list)
+        ? list
+            .map((q) => (typeof q === "string" ? q.trim() : ""))
+            .filter(Boolean)
+        : [];
+
+      if (cleaned.length >= modeConfig.followUpsMin) {
+        return cleaned.slice(0, modeConfig.followUpsMax);
+      }
+
+      return modeConfig.fallbackFollowUps.slice(
+        0,
+        Math.max(modeConfig.followUpsMin, modeConfig.followUpsMax)
+      );
+    };
 
     const client = getOpenAIClient();
 
@@ -351,12 +409,13 @@ export async function expandIdea(req, res, next) {
     // --- System prompt ---
     const systemPrompt = [
       "You are Myceli, an expert ideation assistant for a visual mind-map app.",
-      "You expand ideas into clear, creative sub-ideas.",
+      "You expand ideas into clear, creative sub-ideas, and you can also answer direct questions succinctly when asked.",
       "Use the provided ancestry for context and maintain thematic coherence.",
-      "For each sub-idea, also propose 3–7 concise follow-up questions that a curious thinker might ask next.",
+      `When in 'ask' mode, stay lean—do not fabricate extra branches. 1–3 focused items are enough if the question is narrow.`,
+      `For each item, propose ${modeConfig.followUpsMin}–${modeConfig.followUpsMax} concise follow-up questions that a curious thinker might ask next.`,
       "Return ONLY valid JSON using this schema:",
       '{ "ideas": [ { "id": "string", "label": "string", "summary": "string", "details": [], "followUps": ["string", ...] } ] }',
-      "Summaries should be 50–80 words. Do NOT include commentary or markdown outside the JSON.",
+      `${modeConfig.summaryHint} Do NOT include commentary or markdown outside the JSON.`,
     ].join(" ");
 
     // --- Dynamic user instruction ---
@@ -373,13 +432,17 @@ export async function expandIdea(req, res, next) {
         ? `History (oldest → newest):\n${historyLines.join("\n\n")}`
         : "History: none recorded beyond the original prompt.",
       `Current idea to expand: "${ideaTitle}".`,
+      `Mode: ${mode}.`,
       focus,
-      "Expand with 4–6 sub-ideas grounded in the original prompt/context and the full history above.",
+      modeConfig.countInstruction,
     ]
       .filter(Boolean)
       .join("\n\n");
 
-    console.log("🧠 Sending prompt to model...", { hasCustomPrompt: !!prompt });
+    console.log("🧠 Sending prompt to model...", {
+      hasCustomPrompt: !!prompt,
+      mode,
+    });
 
     const response = await client.responses.create({
       model: "gpt-4o-mini",
@@ -418,23 +481,17 @@ export async function expandIdea(req, res, next) {
         nodeId: i.nodeId || i.id,
         history: ideaHistory,
         details: [], // we don’t expand sub-ideas further here
-        followUps:
-          Array.isArray(i.followUps) && i.followUps.length >= 3
-            ? i.followUps.slice(0, 7)
-            : [
-                "What assumptions does this idea rely on?",
-                "How could we prototype this quickly?",
-                "Who would benefit most from this idea?",
-                "What are the key risks or trade-offs?",
-                "What resources would this require?",
-              ].slice(0, Math.floor(Math.random() * 5) + 3), // fallback 3–7
+        followUps: ensureFollowUps(i.followUps),
       };
     });
 
-    // --- Enforce 4–6 sub-ideas ---
-    if (ideas.length < 4 || ideas.length > 6) {
-      ideas = ideas.slice(0, 6);
-      while (ideas.length < 4) {
+    // --- Enforce per-mode idea counts ---
+    if (
+      ideas.length < modeConfig.minIdeas ||
+      ideas.length > modeConfig.maxIdeas
+    ) {
+      ideas = ideas.slice(0, modeConfig.maxIdeas);
+      while (ideas.length < modeConfig.minIdeas) {
         const fallbackId = makeIdeaId(
           `Fallback-${ideas.length}`,
           getLineageTitles(historyWithPrompt)
@@ -442,14 +499,10 @@ export async function expandIdea(req, res, next) {
         const fallbackIdea = {
           id: fallbackId,
           nodeId: fallbackId,
-          label: "Sub-idea",
-          summary: "",
+          label: modeConfig.fallbackLabel,
+          summary: modeConfig.fallbackSummary,
           details: [],
-          followUps: [
-            "What could make this idea more impactful?",
-            "Who might oppose this idea and why?",
-            "What’s an example use case?",
-          ],
+          followUps: ensureFollowUps(modeConfig.fallbackFollowUps),
         };
         fallbackIdea.history = appendHistory(historyWithPrompt, {
           kind: "idea",
@@ -504,6 +557,10 @@ export async function generateIdeaImage(req, res, next) {
       typeof req.body?.extraContext === "string"
         ? req.body.extraContext.trim()
         : "";
+    const incomingHistory = normalizeHistory(
+      typeof req.body?.history === "object" ? req.body.history : {},
+      ideaTitle
+    );
 
     if (!ideaTitle) {
       return res
@@ -511,10 +568,29 @@ export async function generateIdeaImage(req, res, next) {
         .json({ error: "Missing required field: ideaTitle" });
     }
 
+    const historyLines = incomingHistory.ancestors.map((anc, idx) => {
+      const label =
+        anc.kind === "question" ? `Follow-up ${idx + 1}` : `Idea ${idx + 1}`;
+      const summary = anc.summary ? `\nSummary: ${anc.summary}` : "";
+      return `${label}: ${anc.title}${summary}`;
+    });
+
+    const lineageText = historyLines.length
+      ? `History (oldest → newest):\n${historyLines.join("\n\n")}`
+      : "History: none recorded beyond this idea.";
+
     const promptParts = [
       `Create a single, high-quality illustrative image for the idea: "${ideaTitle}".`,
+      incomingHistory.originalPrompt
+        ? `Original prompt: ${incomingHistory.originalPrompt}`
+        : null,
+      incomingHistory.originalContext
+        ? `Original context to honor: ${incomingHistory.originalContext}`
+        : null,
+      lineageText,
       ideaSummary ? `Key details: ${ideaSummary}` : null,
       extraContext ? `User-provided creative direction: ${extraContext}` : null,
+      "Respect the lineage above so the visual stays coherent with how the idea evolved.",
       "Avoid adding any text in the image. Prefer a clean, modern style. Aspect ratio 1:1. Natural lighting. High detail.",
     ].filter(Boolean);
 
@@ -545,6 +621,103 @@ export async function generateIdeaImage(req, res, next) {
     });
   } catch (err) {
     console.error("Unexpected error in generateIdeaImage:", err);
+    return next(err);
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*                        REGENERATE / REFINE IDEA IMAGE                      */
+/* -------------------------------------------------------------------------- */
+
+export async function regenerateIdeaImage(req, res, next) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const ideaTitle =
+      typeof req.body?.ideaTitle === "string" ? req.body.ideaTitle.trim() : "";
+    const feedback =
+      typeof req.body?.feedback === "string" ? req.body.feedback.trim() : "";
+    const imageUrl =
+      typeof req.body?.imageUrl === "string" ? req.body.imageUrl.trim() : "";
+    const promptUsed =
+      typeof req.body?.promptUsed === "string" ? req.body.promptUsed.trim() : "";
+    const incomingHistory = normalizeHistory(
+      typeof req.body?.history === "object" ? req.body.history : {},
+      ideaTitle
+    );
+
+    if (!ideaTitle) {
+      return res
+        .status(400)
+        .json({ error: "Missing required field: ideaTitle" });
+    }
+    if (!feedback) {
+      return res
+        .status(400)
+        .json({ error: "Missing required field: feedback" });
+    }
+
+    const historyLines = incomingHistory.ancestors.map((anc, idx) => {
+      const label =
+        anc.kind === "question" ? `Follow-up ${idx + 1}` : `Idea ${idx + 1}`;
+      const summary = anc.summary ? `\nSummary: ${anc.summary}` : "";
+      return `${label}: ${anc.title}${summary}`;
+    });
+
+    const lineageText = historyLines.length
+      ? `History (oldest → newest):\n${historyLines.join("\n\n")}`
+      : "History: none recorded beyond this idea.";
+
+    const promptParts = [
+      `Create a revised image for: "${ideaTitle}".`,
+      incomingHistory.originalPrompt
+        ? `Original prompt: ${incomingHistory.originalPrompt}`
+        : null,
+      incomingHistory.originalContext
+        ? `Original context to honor: ${incomingHistory.originalContext}`
+        : null,
+      lineageText,
+      promptUsed
+        ? `Prompt that produced the current image: ${promptUsed}`
+        : null,
+      imageUrl
+        ? "An existing image is provided as a reference (base64 or URL). Preserve core subjects while applying the feedback."
+        : null,
+      `User feedback for the revision: ${feedback}`,
+      "Respect the lineage above so the visual stays coherent with how the idea evolved.",
+      "Avoid adding any text in the image. Prefer a clean, modern style. Aspect ratio 1:1. Natural lighting. High detail.",
+    ].filter(Boolean);
+
+    const prompt = promptParts.join("\n");
+    const client = getOpenAIClient();
+
+    const response = await client.images.generate({
+      model: "gpt-image-1",
+      prompt,
+      size: "1024x1024",
+      quality: "high",
+      n: 1,
+    });
+
+    const imageData = response?.data?.[0];
+    const newImageUrl =
+      (imageData?.b64_json && `data:image/png;base64,${imageData.b64_json}`) ||
+      imageData?.url;
+    if (!newImageUrl) {
+      return res.status(502).json({
+        error: "Image regeneration failed: no image returned",
+      });
+    }
+
+    return res.status(200).json({
+      imageUrl: newImageUrl,
+      promptUsed: prompt,
+    });
+  } catch (err) {
+    console.error("Unexpected error in regenerateIdeaImage:", err);
     return next(err);
   }
 }

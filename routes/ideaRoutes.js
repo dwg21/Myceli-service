@@ -3,6 +3,7 @@ import {
   generateMainIdeas,
   expandIdea,
   generateIdeaImage,
+  regenerateIdeaImage,
 } from "../controllers/ideaController.js";
 import { requireAuth } from "../middleware/auth.js";
 
@@ -16,5 +17,6 @@ router.post("/expand-idea", requireAuth, expandIdea);
 
 // POST /api/generate-image
 router.post("/generate-image", requireAuth, generateIdeaImage);
+router.post("/regenerate-image", requireAuth, regenerateIdeaImage);
 
 export default router;

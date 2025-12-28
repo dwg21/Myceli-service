@@ -80,7 +80,9 @@ export async function createIdeaChat(req, res, next) {
     // --- Generate system message (saved, but no assistant call yet) ---
     const historyContext = [
       `Original prompt: ${history.originalPrompt}`,
-      history.originalContext ? `Original context: ${history.originalContext}` : null,
+      history.originalContext
+        ? `Original context: ${history.originalContext}`
+        : null,
       ...history.ancestors.map((anc, idx) => {
         const label =
           anc.kind === "question" ? `Follow-up ${idx + 1}` : `Idea ${idx + 1}`;
@@ -182,9 +184,10 @@ export const saveChat = async (req, res) => {
 export const getUserChats = async (req, res) => {
   try {
     const userId = req.user.id;
+
     const chats = await Chat.find({ createdBy: userId })
       .sort({ updatedAt: -1 })
-      .select("title graphId ideaId updatedAt history");
+      .select("_id title graphId ideaId updatedAt history");
 
     res.status(200).json({ chats });
   } catch (err) {
