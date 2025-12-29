@@ -11,12 +11,24 @@ import jwt from "jsonwebtoken";
 /* ---------------- Signup ---------------- */
 export const signup = async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, plan } = req.body;
     const exists = await User.findOne({ email });
     if (exists)
       return res.status(409).json({ error: "Email already registered" });
 
-    const user = await User.create({ name, email, password });
+    const normalizedPlan =
+      plan === "pro" || plan === "basic" ? plan : "free";
+
+    const user = await User.create({
+      name,
+      email,
+      password,
+      plan: normalizedPlan,
+      creditsTotal: undefined, // use schema default per plan
+      creditsUsed: 0,
+      periodStart: undefined,
+      periodEnd: undefined,
+    });
 
     const { accessToken, refreshToken } = await issueTokensForUser(
       user,
@@ -30,6 +42,10 @@ export const signup = async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        plan: user.plan,
+        creditsTotal: user.creditsTotal,
+        creditsUsed: user.creditsUsed,
+        periodEnd: user.periodEnd,
       },
     });
   } catch (err) {
@@ -59,6 +75,10 @@ export const login = async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        plan: user.plan || "free",
+        creditsTotal: user.creditsTotal,
+        creditsUsed: user.creditsUsed,
+        periodEnd: user.periodEnd,
       },
     });
   } catch (err) {
@@ -104,7 +124,7 @@ export const me = async (req, res) => {
   }
 
   try {
-    const user = await User.findById(req.user.id).select("name email role");
+    const user = await User.findById(req.user.id).select("name email role plan creditsTotal creditsUsed periodEnd");
     if (!user) return res.status(404).json({ error: "User not found" });
 
     res.json({
@@ -113,6 +133,10 @@ export const me = async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        plan: user.plan || "free",
+        creditsTotal: user.creditsTotal,
+        creditsUsed: user.creditsUsed,
+        periodEnd: user.periodEnd,
       },
     });
   } catch (err) {

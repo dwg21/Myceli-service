@@ -6,6 +6,19 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   role: { type: String, enum: ["user", "admin"], default: "user" },
+  plan: { type: String, enum: ["free", "basic", "pro"], default: "free" },
+  creditsTotal: {
+    type: Number,
+    default: function () {
+      return getPlanCredits(this.plan);
+    },
+  },
+  creditsUsed: { type: Number, default: 0 },
+  periodStart: { type: Date, default: () => new Date() },
+  periodEnd: {
+    type: Date,
+    default: () => getNextPeriodEnd(),
+  },
   providers: [
     {
       provider: { type: String, enum: ["google", "github"], required: true },
@@ -33,3 +46,4 @@ userSchema.index(
 );
 
 export default mongoose.model("User", userSchema);
+import { getPlanCredits, getNextPeriodEnd } from "../utils/planCredits.js";

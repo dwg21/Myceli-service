@@ -11,6 +11,7 @@ import {
   sendChatMessageStream,
 } from "../controllers/chatController.js";
 import { requireAuth } from "../middleware/auth.js";
+import { requireCredits } from "../middleware/credits.js";
 
 const router = express.Router();
 
@@ -21,8 +22,8 @@ router.post("/create", createIdeaChat);
 router.get("/", getUserChats);
 router.get("/graph/:graphId", getChatsByGraph);
 router.get("/:id", getChatById);
-router.post("/message", sendChatMessage);
-router.post("/send-stream", sendChatMessageStream);
+router.post("/message", requireCredits("chatMessage"), sendChatMessage);
+router.post("/send-stream", requireCredits("chatStream"), sendChatMessageStream);
 router.delete("/:id", deleteChat);
 
 export default router;

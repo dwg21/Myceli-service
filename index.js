@@ -9,6 +9,7 @@ import chatRoutes from "./routes/chatRoutes.js";
 import ideaGraphRoutes from "./routes/ideaGraphRoutes.js";
 import { errorHandler } from "./middleware/error.js";
 import { connectDB } from "./config/db.js"; // ✅ import your DB connector
+import { startCreditResetScheduler } from "./services/creditResetService.js";
 
 dotenv.config();
 
@@ -69,4 +70,5 @@ connectDB().then(() => {
   app.listen(PORT, () => {
     console.log(`✅ Myceli backend listening on port ${PORT}`);
   });
+  startCreditResetScheduler();
 });

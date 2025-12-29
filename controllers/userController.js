@@ -1,4 +1,5 @@
 import User from "../models/User.js";
+import { getPlanCredits, getNextPeriodEnd } from "../utils/planCredits.js";
 
 /**
  * Get the logged-in user's info
@@ -18,12 +19,36 @@ export const getMe = async (req, res) => {
  */
 export const updateMe = async (req, res) => {
   try {
-    const updates = req.body;
-    const user = await User.findByIdAndUpdate(req.user.id, updates, {
-      new: true,
-      runValidators: true,
-    }).select("-password");
-    res.json({ user });
+    const updates = { ...req.body };
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    // Handle plan change explicitly
+    if (typeof updates.plan === "string") {
+      const normalized =
+        updates.plan === "basic" || updates.plan === "pro"
+          ? updates.plan
+          : "free";
+      if (normalized !== user.plan) {
+        user.plan = normalized;
+        user.creditsTotal = getPlanCredits(normalized);
+        user.creditsUsed = 0;
+        user.periodStart = new Date();
+        user.periodEnd = getNextPeriodEnd(user.periodStart);
+      }
+      delete updates.plan;
+    }
+
+    // Apply other updates (except protected fields)
+    delete updates.role;
+    delete updates.password;
+    Object.assign(user, updates);
+
+    await user.save();
+    const safeUser = user.toObject();
+    delete safeUser.password;
+
+    res.json({ user: safeUser });
   } catch (err) {
     res.status(400).json({ error: "Failed to update user" });
   }
