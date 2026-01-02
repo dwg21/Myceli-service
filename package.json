@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.69",
+    "@aws-sdk/client-s3": "^3.744.0",
     "ai": "^5.0.98",
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",

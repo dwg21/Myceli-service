@@ -1,5 +1,6 @@
 import { IdeaGraph } from "../models/ideaGraph.js";
 import { getOpenAIClient } from "../utils/openaiClient.js";
+import { storageAvailable, uploadIdeaImage } from "../services/storageService.js";
 import crypto from "crypto";
 
 /* -------------------------------------------------------------------------- */
@@ -125,6 +126,42 @@ function validateRequired(body, field, res) {
     return false;
   }
   return true;
+}
+
+async function getImageBuffer(imageData) {
+  if (imageData?.b64_json) {
+    return Buffer.from(imageData.b64_json, "base64");
+  }
+  if (imageData?.url) {
+    try {
+      const response = await fetch(imageData.url);
+      if (!response.ok) return null;
+      const arrayBuffer = await response.arrayBuffer();
+      return Buffer.from(arrayBuffer);
+    } catch (err) {
+      console.error("Failed to download image from URL", err);
+      return null;
+    }
+  }
+  return null;
+}
+
+async function persistGeneratedImage({ imageData, userId, ideaTitle }) {
+  if (!storageAvailable) return null;
+  try {
+    const buffer = await getImageBuffer(imageData);
+    if (!buffer) return null;
+    const { url } = await uploadIdeaImage({
+      buffer,
+      userId,
+      ideaTitle,
+      contentType: "image/png",
+    });
+    return url;
+  } catch (err) {
+    console.error("Image upload failed, falling back to inline URL", err);
+    return null;
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -606,17 +643,23 @@ export async function generateIdeaImage(req, res, next) {
     });
 
     const imageData = response?.data?.[0];
-    const imageUrl =
+    const inlineImageUrl =
       (imageData?.b64_json && `data:image/png;base64,${imageData.b64_json}`) ||
       imageData?.url;
-    if (!imageUrl) {
+    if (!inlineImageUrl) {
       return res.status(502).json({
         error: "Image generation failed: no image returned",
       });
     }
 
+    const hostedUrl = await persistGeneratedImage({
+      imageData,
+      userId,
+      ideaTitle,
+    });
+
     return res.status(200).json({
-      imageUrl,
+      imageUrl: hostedUrl || inlineImageUrl,
       promptUsed: prompt,
     });
   } catch (err) {
@@ -703,17 +746,23 @@ export async function regenerateIdeaImage(req, res, next) {
     });
 
     const imageData = response?.data?.[0];
-    const newImageUrl =
+    const inlineImageUrl =
       (imageData?.b64_json && `data:image/png;base64,${imageData.b64_json}`) ||
       imageData?.url;
-    if (!newImageUrl) {
+    if (!inlineImageUrl) {
       return res.status(502).json({
         error: "Image regeneration failed: no image returned",
       });
     }
 
+    const hostedUrl = await persistGeneratedImage({
+      imageData,
+      userId,
+      ideaTitle,
+    });
+
     return res.status(200).json({
-      imageUrl: newImageUrl,
+      imageUrl: hostedUrl || inlineImageUrl,
       promptUsed: prompt,
     });
   } catch (err) {
