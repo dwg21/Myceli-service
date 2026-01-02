@@ -25,6 +25,49 @@ const normalizeHistory = (history, fallbackPrompt = "") => {
   return { originalPrompt, originalContext, ancestors };
 };
 
+const buildHistoryContext = (history) => {
+  if (!history) return "";
+
+  const sections = [
+    history.originalPrompt
+      ? `Original prompt: ${history.originalPrompt}`
+      : null,
+    history.originalContext
+      ? `Original context: ${history.originalContext}`
+      : null,
+    ...(Array.isArray(history.ancestors)
+      ? history.ancestors.map((anc, idx) => {
+          const label =
+            anc.kind === "question"
+              ? `Follow-up ${idx + 1}`
+              : `Idea ${idx + 1}`;
+          return `${label}: ${anc.title}${
+            anc.summary ? `\nSummary: ${anc.summary}` : ""
+          }`;
+        })
+      : []),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  return sections;
+};
+
+const buildSystemMessage = (ideaTitle, history) => {
+  const historyContext = buildHistoryContext(history);
+
+  const content = [
+    "You are a helpful, general-purpose AI assistant.",
+    "Respond conversationally and clearly. No product-specific persona is required.",
+    historyContext ? `Background (use if helpful):\n${historyContext}` : null,
+    ideaTitle ? `Current topic: ${ideaTitle}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  return { role: "system", content };
+};
+
 /**
  * Starts a new reflection chat for a specific idea.
  * Builds context from ancestors, generates system message, and automatically
@@ -55,6 +98,8 @@ export async function createIdeaChat(req, res, next) {
         .json({ error: "Missing required fields: graphId and ideaId" });
     }
 
+    const systemMessage = buildSystemMessage(ideaTitle, history);
+
     // --- Prevent duplicate chats ---
     const existingChat = await Chat.findOne({
       createdBy: userId,
@@ -76,37 +121,6 @@ export async function createIdeaChat(req, res, next) {
     }
 
     console.log("Contiuning");
-
-    // --- Generate system message (saved, but no assistant call yet) ---
-    const historyContext = [
-      `Original prompt: ${history.originalPrompt}`,
-      history.originalContext
-        ? `Original context: ${history.originalContext}`
-        : null,
-      ...history.ancestors.map((anc, idx) => {
-        const label =
-          anc.kind === "question" ? `Follow-up ${idx + 1}` : `Idea ${idx + 1}`;
-        return `${label}: ${anc.title}${
-          anc.summary ? `\nSummary: ${anc.summary}` : ""
-        }`;
-      }),
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-
-    const systemMessage = {
-      role: "system",
-      content: [
-        "You are Myceli, an expert ideation companion for a visual mind-map app.",
-        "You are currently focusing on ONE idea node within a hierarchical map.",
-        "Your role is to help the user explore, question, and deepen this idea.",
-        "Be thoughtful, structured, and concise but conversational.",
-        "Do not output JSON — respond in natural text.",
-        "Context below gives you the full ancestry leading to this idea:",
-        historyContext,
-        `\nCurrent idea: ${ideaTitle}`,
-      ].join("\n\n"),
-    };
 
     // --- Create empty chat (frontend will start first message) ---
     const chat = await Chat.create({
@@ -167,6 +181,11 @@ export const saveChat = async (req, res) => {
         chat.history?.originalPrompt || chat.title
       );
     }
+
+    chat.systemMessage = buildSystemMessage(
+      chat.title || chat.history?.originalPrompt || "",
+      chat.history
+    );
 
     chat.updatedAt = new Date();
     await chat.save();
@@ -271,12 +290,22 @@ export const sendChatMessage = async (req, res) => {
     const chat = await Chat.findOne({ _id: chatId, createdBy: userId });
     if (!chat) return res.status(404).json({ error: "Chat not found" });
 
+    const normalizedHistory = normalizeHistory(
+      chat.history,
+      chat.title || chat.history?.originalPrompt || ""
+    );
+    chat.history = normalizedHistory;
+    const systemMessage = buildSystemMessage(
+      chat.title || normalizedHistory.originalPrompt,
+      normalizedHistory
+    );
+
     // Append user message
     chat.messages.push({ role: "user", content });
     chat.updatedAt = new Date();
 
     // Reuse the stored system message + conversation so far
-    const messages = [chat.systemMessage, ...chat.messages];
+    const messages = [systemMessage, ...chat.messages];
 
     const cleanMessages = messages.map((m) => ({
       role: m.role,
@@ -296,6 +325,7 @@ export const sendChatMessage = async (req, res) => {
 
     // Append assistant reply
     chat.messages.push({ role: "assistant", content: reply });
+    chat.systemMessage = systemMessage;
     await chat.save();
 
     res.status(200).json({ reply, chat });
@@ -314,6 +344,16 @@ export async function sendChatMessageStream(req, res) {
     const chat = await Chat.findOne({ _id: chatId, createdBy: userId });
     if (!chat) return res.status(404).json({ error: "Chat not found" });
 
+    const normalizedHistory = normalizeHistory(
+      chat.history,
+      chat.title || chat.history?.originalPrompt || ""
+    );
+    chat.history = normalizedHistory;
+    const systemMessage = buildSystemMessage(
+      chat.title || normalizedHistory.originalPrompt,
+      normalizedHistory
+    );
+
     // 2. Save the user message
     chat.messages.push({ role: "user", content });
     chat.updatedAt = new Date();
@@ -321,7 +361,7 @@ export async function sendChatMessageStream(req, res) {
 
     // 3. Build conversation history
     const messages = [
-      chat.systemMessage,
+      systemMessage,
       ...chat.messages.map((m) => ({ role: m.role, content: m.content })),
     ];
 
@@ -344,6 +384,7 @@ export async function sendChatMessageStream(req, res) {
 
     chat.messages.push({ role: "assistant", content: fullReply });
     chat.updatedAt = new Date();
+    chat.systemMessage = systemMessage;
     await chat.save();
   } catch (err) {
     console.error("STREAM ERROR:", err);
