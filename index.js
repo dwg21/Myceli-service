@@ -7,6 +7,7 @@ import userRoutes from "./routes/userRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
 import chatRoutes from "./routes/chatRoutes.js";
 import ideaGraphRoutes from "./routes/ideaGraphRoutes.js";
+import shareRoutes from "./routes/shareRoutes.js";
 import { errorHandler } from "./middleware/error.js";
 import { connectDB } from "./config/db.js"; // ✅ import your DB connector
 import { startCreditResetScheduler } from "./services/creditResetService.js";
@@ -50,6 +51,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/graphs", ideaGraphRoutes);
 app.use("/api/chats", chatRoutes);
+app.use("/api/share", shareRoutes);
 
 /* ---------------- Error Handler ---------------- */
 app.use(errorHandler);
