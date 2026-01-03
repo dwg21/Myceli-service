@@ -3,6 +3,18 @@ import { getOpenAIClient } from "../utils/openaiClient.js";
 import { storageAvailable, uploadIdeaImage } from "../services/storageService.js";
 import crypto from "crypto";
 
+const IMAGE_PRESETS = {
+  // Map to provider-supported size/quality values
+  standard: { size: "1024x1024", quality: "low" },
+  balanced: { size: "1024x1024", quality: "medium" },
+  "high-detail": { size: "1024x1024", quality: "high" },
+};
+
+const resolveImageSettings = (preset) => {
+  if (typeof preset !== "string") return IMAGE_PRESETS.standard;
+  return IMAGE_PRESETS[preset] || IMAGE_PRESETS.standard;
+};
+
 /* -------------------------------------------------------------------------- */
 /*                               ID GENERATORS                                */
 /* -------------------------------------------------------------------------- */
@@ -594,6 +606,11 @@ export async function generateIdeaImage(req, res, next) {
       typeof req.body?.extraContext === "string"
         ? req.body.extraContext.trim()
         : "";
+    const generationPreset =
+      typeof req.body?.generationPreset === "string"
+        ? req.body.generationPreset
+        : "standard";
+    const imageSettings = resolveImageSettings(generationPreset);
     const incomingHistory = normalizeHistory(
       typeof req.body?.history === "object" ? req.body.history : {},
       ideaTitle
@@ -637,8 +654,8 @@ export async function generateIdeaImage(req, res, next) {
     const response = await client.images.generate({
       model: "gpt-image-1",
       prompt,
-      size: "1024x1024",
-      quality: "high",
+      size: imageSettings.size,
+      quality: imageSettings.quality,
       n: 1,
     });
 
@@ -687,6 +704,11 @@ export async function regenerateIdeaImage(req, res, next) {
       typeof req.body?.imageUrl === "string" ? req.body.imageUrl.trim() : "";
     const promptUsed =
       typeof req.body?.promptUsed === "string" ? req.body.promptUsed.trim() : "";
+    const generationPreset =
+      typeof req.body?.generationPreset === "string"
+        ? req.body.generationPreset
+        : "standard";
+    const imageSettings = resolveImageSettings(generationPreset);
     const incomingHistory = normalizeHistory(
       typeof req.body?.history === "object" ? req.body.history : {},
       ideaTitle
@@ -740,8 +762,8 @@ export async function regenerateIdeaImage(req, res, next) {
     const response = await client.images.generate({
       model: "gpt-image-1",
       prompt,
-      size: "1024x1024",
-      quality: "high",
+      size: imageSettings.size,
+      quality: imageSettings.quality,
       n: 1,
     });
 
