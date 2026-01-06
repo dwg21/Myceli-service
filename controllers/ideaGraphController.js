@@ -1,5 +1,6 @@
 // Create or update a user's graph
 import { IdeaGraph } from "../models/ideaGraph.js";
+import { Chat } from "../models/Chat.js";
 
 export const saveGraph = async (req, res) => {
   try {
@@ -72,5 +73,34 @@ export const getGraphById = async (req, res) => {
     res.status(200).json(graph);
   } catch (err) {
     res.status(500).json({ error: "Failed to load graph" });
+  }
+};
+
+// Delete a user's graph and any associated chats
+export const deleteGraph = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+
+    if (!id) {
+      return res.status(400).json({ error: "Graph ID is required" });
+    }
+
+    const graph = await IdeaGraph.findOne({ _id: id, user: userId });
+    if (!graph) {
+      return res.status(404).json({ error: "Graph not found" });
+    }
+
+    // Remove all chats the user owns that reference this graph
+    await Chat.deleteMany({ createdBy: userId, graphId: id });
+
+    await graph.deleteOne();
+
+    return res
+      .status(200)
+      .json({ message: "Graph and related chats deleted successfully" });
+  } catch (err) {
+    console.error("Failed to delete graph:", err);
+    return res.status(500).json({ error: "Failed to delete graph" });
   }
 };
