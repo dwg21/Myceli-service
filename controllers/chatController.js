@@ -77,6 +77,9 @@ export async function createIdeaChat(req, res, next) {
   try {
     const { ideaTitle, history: rawHistory, graphId, ideaId } = req.body;
     const userId = req.user.id;
+    const wantsStream =
+      req.headers?.accept?.includes("text/event-stream") ||
+      req.query?.stream === "1";
 
     // --- Validation ---
     if (!ideaTitle?.trim()) {
@@ -120,9 +123,9 @@ export async function createIdeaChat(req, res, next) {
       });
     }
 
-    console.log("Contiuning");
+    const initialPrompt = "Please explain this idea in detail.";
 
-    // --- Create empty chat (frontend will start first message) ---
+    // --- Create chat shell (will be filled after streaming) ---
     const chat = await Chat.create({
       createdBy: userId,
       graphId,
@@ -139,9 +142,76 @@ export async function createIdeaChat(req, res, next) {
       { $set: { "nodes.$.chatId": chat._id } }
     );
 
-    return res
-      .status(201)
-      .json({ chat, node: { id: ideaId, chatId: chat._id } });
+    if (!wantsStream) {
+      // Non-streaming fallback: generate full first reply synchronously
+      let initialReply = "";
+      try {
+        const client = getOpenAIClient();
+        const response = await client.responses.create({
+          model: "gpt-4o-mini",
+          input: [systemMessage, { role: "user", content: initialPrompt }],
+          text: { format: { type: "text" } },
+          temperature: 0.7,
+        });
+        initialReply = response.output_text?.trim() || "";
+      } catch (err) {
+        console.error("❌ Failed to generate initial chat reply:", err);
+        initialReply =
+          "I couldn't generate a response right now. Please try asking again.";
+      }
+
+      chat.messages = [
+        { role: "user", content: initialPrompt },
+        { role: "assistant", content: initialReply },
+      ];
+      await chat.save();
+
+      res.setHeader(
+        "Access-Control-Expose-Headers",
+        "X-Chat-Id, X-Initial-Prompt"
+      );
+      res.setHeader("X-Chat-Id", chat._id.toString());
+      res.setHeader("X-Initial-Prompt", initialPrompt);
+
+      return res.status(201).json({
+        chat,
+        node: { id: ideaId, chatId: chat._id },
+        initialPrompt,
+      });
+    }
+
+    // --- Streaming path ---
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader(
+      "Access-Control-Expose-Headers",
+      "X-Chat-Id, X-Initial-Prompt"
+    );
+    res.setHeader("X-Chat-Id", chat._id.toString());
+    res.setHeader("X-Initial-Prompt", initialPrompt);
+
+    const messagesForModel = [
+      systemMessage,
+      { role: "user", content: initialPrompt },
+    ];
+
+    const result = streamText({
+      model: openai("gpt-4o-mini"),
+      messages: messagesForModel,
+    });
+
+    await result.pipeTextStreamToResponse(res);
+
+    const fullReply = await result.text;
+
+    chat.messages = [
+      { role: "user", content: initialPrompt },
+      { role: "assistant", content: fullReply },
+    ];
+    chat.systemMessage = systemMessage;
+    chat.updatedAt = new Date();
+    await chat.save();
   } catch (err) {
     console.error("💥 Error in createIdeaChat:", err);
     next(err);
