@@ -660,10 +660,7 @@ export async function generateIdeaImage(req, res, next) {
     });
 
     const imageData = response?.data?.[0];
-    const inlineImageUrl =
-      (imageData?.b64_json && `data:image/png;base64,${imageData.b64_json}`) ||
-      imageData?.url;
-    if (!inlineImageUrl) {
+    if (!imageData?.b64_json && !imageData?.url) {
       return res.status(502).json({
         error: "Image generation failed: no image returned",
       });
@@ -675,8 +672,18 @@ export async function generateIdeaImage(req, res, next) {
       ideaTitle,
     });
 
+    if (!hostedUrl) {
+      const reason = storageAvailable
+        ? "upload_failed"
+        : "storage_not_configured";
+      return res.status(502).json({
+        error: "Image upload failed. Storage may be misconfigured.",
+        reason,
+      });
+    }
+
     return res.status(200).json({
-      imageUrl: hostedUrl || inlineImageUrl,
+      imageUrl: hostedUrl,
       promptUsed: prompt,
     });
   } catch (err) {
@@ -768,10 +775,7 @@ export async function regenerateIdeaImage(req, res, next) {
     });
 
     const imageData = response?.data?.[0];
-    const inlineImageUrl =
-      (imageData?.b64_json && `data:image/png;base64,${imageData.b64_json}`) ||
-      imageData?.url;
-    if (!inlineImageUrl) {
+    if (!imageData?.b64_json && !imageData?.url) {
       return res.status(502).json({
         error: "Image regeneration failed: no image returned",
       });
@@ -783,8 +787,18 @@ export async function regenerateIdeaImage(req, res, next) {
       ideaTitle,
     });
 
+    if (!hostedUrl) {
+      const reason = storageAvailable
+        ? "upload_failed"
+        : "storage_not_configured";
+      return res.status(502).json({
+        error: "Image upload failed. Storage may be misconfigured.",
+        reason,
+      });
+    }
+
     return res.status(200).json({
-      imageUrl: hostedUrl || inlineImageUrl,
+      imageUrl: hostedUrl,
       promptUsed: prompt,
     });
   } catch (err) {

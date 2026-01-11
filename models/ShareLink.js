@@ -14,8 +14,6 @@ const shareLinkSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
-
-shareLinkSchema.index({ shareId: 1 }, { unique: true });
 shareLinkSchema.index({ createdBy: 1, graph: 1 });
 
 export const ShareLink = mongoose.model("ShareLink", shareLinkSchema);
