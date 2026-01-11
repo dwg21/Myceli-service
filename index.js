@@ -30,8 +30,21 @@ app.use((req, res, next) => {
 });
 
 /* ---------------- CORS ---------------- */
+const parseOrigins = (value) =>
+  (value || "")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+
+const allowedOrigins =
+  parseOrigins(process.env.CORS_ORIGIN) || ["http://localhost:3000"];
+
 const corsOptions = {
-  origin: "http://localhost:3000",
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true); // allow non-browser requests
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error("Not allowed by CORS"), false);
+  },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
