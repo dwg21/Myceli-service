@@ -7,8 +7,36 @@ import {
   setRefreshCookie,
 } from "../services/tokenService.js";
 
+const originFromUrl = (value) => {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+};
+
+const allowedOrigins = [
+  env.frontendUrl,
+  process.env.FRONTEND_URL,
+  process.env.CORS_ORIGIN,
+  "http://localhost:3000",
+].filter(Boolean);
+const allowedOriginSet = new Set(
+  allowedOrigins.map(originFromUrl).filter(Boolean)
+);
 const defaultReturnTo =
-  env.frontendUrl || process.env.CORS_ORIGIN || "http://localhost:3000";
+  allowedOrigins.find((o) => originFromUrl(o)) || "http://localhost:3000";
+
+const sanitizeReturnTo = (maybeUrl) => {
+  try {
+    const url = new URL(maybeUrl);
+    if (!allowedOriginSet.has(url.origin)) return defaultReturnTo;
+    // Preserve path/query/hash for same-origin navigation only
+    return url.toString();
+  } catch {
+    return defaultReturnTo;
+  }
+};
 
 const encodeState = (state) =>
   Buffer.from(JSON.stringify(state)).toString("base64url");
@@ -21,7 +49,7 @@ const decodeState = (state) => {
 };
 
 const sendTokensToClient = (res, payload, returnTo = defaultReturnTo) => {
-  const target = returnTo || defaultReturnTo;
+  const target = sanitizeReturnTo(returnTo);
   const targetOrigin = new URL(target).origin;
   const scriptPayload = JSON.stringify({ type: "oauth-success", payload });
   const html = `
@@ -43,7 +71,7 @@ const sendTokensToClient = (res, payload, returnTo = defaultReturnTo) => {
 };
 
 const sendErrorToClient = (res, error, returnTo = defaultReturnTo) => {
-  const target = returnTo || defaultReturnTo;
+  const target = sanitizeReturnTo(returnTo);
   const targetOrigin = new URL(target).origin;
   const scriptPayload = JSON.stringify({ type: "oauth-error", error });
   const html = `
@@ -130,7 +158,7 @@ const upsertUserFromProfile = async (provider, profile) => {
 export const googleAuth = (req, res) => {
   try {
     ensureProviderConfig("google");
-    const returnTo = req.query.returnTo || defaultReturnTo;
+    const returnTo = sanitizeReturnTo(req.query.returnTo || defaultReturnTo);
     const state = encodeState({ returnTo });
     const params = new URLSearchParams({
       client_id: env.googleClientId,
@@ -152,7 +180,7 @@ export const googleCallback = async (req, res) => {
     ensureProviderConfig("google");
     const { code } = req.query;
     const state = req.query.state ? decodeState(req.query.state) : {};
-    const returnTo = state.returnTo || defaultReturnTo;
+    const returnTo = sanitizeReturnTo(state.returnTo || defaultReturnTo);
     if (!code) return sendErrorToClient(res, "Missing code", returnTo);
 
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
@@ -212,7 +240,7 @@ export const googleCallback = async (req, res) => {
 export const githubAuth = (req, res) => {
   try {
     ensureProviderConfig("github");
-    const returnTo = req.query.returnTo || defaultReturnTo;
+    const returnTo = sanitizeReturnTo(req.query.returnTo || defaultReturnTo);
     const state = encodeState({ returnTo });
     const params = new URLSearchParams({
       client_id: env.githubClientId,
@@ -275,7 +303,7 @@ export const githubCallback = async (req, res) => {
     ensureProviderConfig("github");
     const { code } = req.query;
     const state = req.query.state ? decodeState(req.query.state) : {};
-    const returnTo = state.returnTo || defaultReturnTo;
+    const returnTo = sanitizeReturnTo(state.returnTo || defaultReturnTo);
     if (!code) return sendErrorToClient(res, "Missing code", returnTo);
 
     const accessToken = await fetchGithubAccessToken(code);

@@ -4,15 +4,31 @@ import { ShareLink } from "../models/ShareLink.js";
 import { Chat } from "../models/Chat.js";
 
 const SHARE_ID_BYTES = 8;
+const DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 const sanitizeGraphSnapshot = (graphDoc) => {
   if (!graphDoc) return null;
   const plain = graphDoc.toObject ? graphDoc.toObject() : graphDoc;
+
+  // Strip chat references from nodes before sharing publicly
+  const nodes = Array.isArray(plain.nodes)
+    ? plain.nodes.map((n) => {
+        const node = { ...n };
+        delete node.chatId;
+        if (node.data && typeof node.data === "object") {
+          const clonedData = { ...node.data };
+          delete clonedData.chatId;
+          node.data = clonedData;
+        }
+        return node;
+      })
+    : [];
+
   return {
     graphId: plain._id?.toString(),
     title: plain.title,
     updatedAt: plain.updatedAt,
-    nodes: plain.nodes || [],
+    nodes,
     edges: plain.edges || [],
   };
 };
@@ -51,6 +67,7 @@ export const createShareLink = async (req, res) => {
     if (shareLink) {
       shareLink.snapshot = snapshot;
       shareLink.updatedAt = new Date();
+      shareLink.expiresAt = new Date(Date.now() + DEFAULT_TTL_MS);
       await shareLink.save();
     } else {
       const shareId = buildShareId();
@@ -59,6 +76,7 @@ export const createShareLink = async (req, res) => {
         graph: graph._id,
         createdBy: userId,
         snapshot,
+        expiresAt: new Date(Date.now() + DEFAULT_TTL_MS),
       });
     }
 
@@ -103,7 +121,7 @@ export const getShareLinkForGraph = async (req, res) => {
     return res.status(200).json({
       shareId: share.shareId,
       url: `/share/${share.shareId}`,
-      snapshot: share.snapshot,
+      snapshot: sanitizeGraphSnapshot(share.snapshot),
       createdAt: share.createdAt,
       updatedAt: share.updatedAt,
       expiresAt: share.expiresAt,
@@ -132,7 +150,7 @@ export const getSharedGraph = async (req, res) => {
 
     return res.status(200).json({
       shareId: share.shareId,
-      snapshot: share.snapshot,
+      snapshot: sanitizeGraphSnapshot(share.snapshot),
       createdAt: share.createdAt,
       updatedAt: share.updatedAt,
       expiresAt: share.expiresAt,
