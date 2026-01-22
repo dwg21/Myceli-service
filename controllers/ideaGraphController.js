@@ -23,7 +23,17 @@ export const saveGraph = async (req, res) => {
     }
 
     // --- update existing graph ---
-    if (title) graph.title = title;
+    const normalizedTitle = typeof title === "string" ? title.trim() : "";
+    const titleFromNodes = Array.isArray(nodes)
+      ? nodes
+          .map((n) => n?.data?.label || n?.label || "")
+          .find((t) => typeof t === "string" && t.trim() !== "")
+      : "";
+
+    const resolvedTitle =
+      normalizedTitle || titleFromNodes || graph.title || "Untitled Graph";
+
+    graph.title = resolvedTitle;
     if (Array.isArray(nodes)) graph.nodes = nodes;
     if (Array.isArray(edges)) graph.edges = edges;
     graph.updatedAt = new Date();

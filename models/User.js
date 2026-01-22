@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
+import { getPlanCredits, getNextPeriodEnd } from "../utils/planCredits.js";
 
 const userSchema = new mongoose.Schema({
   name: String,
@@ -28,6 +29,8 @@ const userSchema = new mongoose.Schema({
       displayName: String,
     },
   ],
+  stripeCustomerId: { type: String },
+  stripeSubscriptionId: { type: String },
 });
 
 userSchema.pre("save", async function (next) {
@@ -44,6 +47,6 @@ userSchema.index(
   { "providers.provider": 1, "providers.providerId": 1 },
   { unique: true, sparse: true }
 );
+userSchema.index({ stripeCustomerId: 1 }, { unique: true, sparse: true });
 
 export default mongoose.model("User", userSchema);
-import { getPlanCredits, getNextPeriodEnd } from "../utils/planCredits.js";

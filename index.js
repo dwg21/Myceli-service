@@ -8,9 +8,11 @@ import authRoutes from "./routes/authRoutes.js";
 import chatRoutes from "./routes/chatRoutes.js";
 import ideaGraphRoutes from "./routes/ideaGraphRoutes.js";
 import shareRoutes from "./routes/shareRoutes.js";
+import billingRoutes from "./routes/billingRoutes.js";
 import { errorHandler } from "./middleware/error.js";
 import { connectDB } from "./config/db.js"; // ✅ import your DB connector
 import { startCreditResetScheduler } from "./services/creditResetService.js";
+import { handleStripeWebhook } from "./controllers/billingController.js";
 
 dotenv.config();
 
@@ -55,6 +57,12 @@ app.options("*", cors(corsOptions));
 
 /* ---------------- Middleware ---------------- */
 // Bump JSON limit so graph saves with embedded image data URIs don't blow up
+// Stripe webhook requires raw body, so mount it before json parser.
+app.post(
+  "/api/billing/webhook",
+  express.raw({ type: "application/json" }),
+  handleStripeWebhook
+);
 app.use(express.json({ limit: "25mb" }));
 app.use(cookieParser());
 
@@ -65,6 +73,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/graphs", ideaGraphRoutes);
 app.use("/api/chats", chatRoutes);
 app.use("/api/share", shareRoutes);
+app.use("/api/billing", billingRoutes);
 
 /* ---------------- Error Handler ---------------- */
 app.use(errorHandler);

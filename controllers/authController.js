@@ -18,12 +18,13 @@ export const signup = async (req, res) => {
 
     const normalizedPlan =
       plan === "pro" || plan === "basic" ? plan : "free";
+    const startPlan = normalizedPlan === "free" ? "free" : "free"; // paid plans activate after Stripe webhook
 
     const user = await User.create({
       name,
       email,
       password,
-      plan: normalizedPlan,
+      plan: startPlan,
       creditsTotal: undefined, // use schema default per plan
       creditsUsed: 0,
       periodStart: undefined,

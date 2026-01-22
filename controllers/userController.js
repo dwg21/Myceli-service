@@ -30,6 +30,11 @@ export const updateMe = async (req, res) => {
           ? updates.plan
           : "free";
       if (normalized !== user.plan) {
+        if (normalized !== "free") {
+          return res
+            .status(400)
+            .json({ error: "Upgrades must be managed via billing." });
+        }
         user.plan = normalized;
         user.creditsTotal = getPlanCredits(normalized);
         user.creditsUsed = 0;
