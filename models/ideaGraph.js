@@ -12,7 +12,8 @@ const historyItemSchema = new mongoose.Schema(
 
 const historySchema = new mongoose.Schema(
   {
-    originalPrompt: { type: String, required: true },
+    // These can be omitted when graph-level meta is present
+    originalPrompt: { type: String, default: "" },
     originalContext: { type: String, default: "" },
     ancestors: { type: [historyItemSchema], default: [] },
   },
@@ -22,13 +23,6 @@ const historySchema = new mongoose.Schema(
 const ideaSchema = new mongoose.Schema({
   id: { type: String, required: true },
   type: { type: String, default: "idea" },
-  label: { type: String, default: "" },
-  summary: { type: String, default: "" },
-  imageUrl: { type: String, default: "" },
-  promptUsed: { type: String, default: "" },
-  extraContext: { type: String, default: "" },
-  sourceIdeaId: { type: String, default: "" },
-
   position: {
     x: { type: Number, default: 0 },
     y: { type: Number, default: 0 },
@@ -65,6 +59,10 @@ const ideaGraphSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     title: { type: String, default: "Untitled Graph" },
+    meta: {
+      originalPrompt: { type: String, default: "" },
+      originalContext: { type: String, default: "" },
+    },
     nodes: [ideaSchema],
     edges: [edgeSchema],
   },

@@ -1,10 +1,11 @@
 // Create or update a user's graph
+import mongoose from "mongoose";
 import { IdeaGraph } from "../models/ideaGraph.js";
 import { Chat } from "../models/Chat.js";
 
 export const saveGraph = async (req, res) => {
   try {
-    const { id, title, nodes, edges } = req.body;
+    const { id, title, nodes, edges, meta } = req.body;
     const userId = req.user?.id;
 
     // --- validation ---
@@ -34,13 +35,91 @@ export const saveGraph = async (req, res) => {
       normalizedTitle || titleFromNodes || graph.title || "Untitled Graph";
 
     graph.title = resolvedTitle;
-    if (Array.isArray(nodes)) graph.nodes = nodes;
-    if (Array.isArray(edges)) graph.edges = edges;
+    // sanitize nodes to remove duplicate top-level props; keep only id/type/position/data/chatId/graphId
+    const metaPrompt =
+      (meta && meta.originalPrompt) || graph.meta?.originalPrompt || "";
+    const metaContext =
+      (meta && meta.originalContext) || graph.meta?.originalContext || "";
+
+    const cleanNodes = Array.isArray(nodes)
+      ? nodes.map((n) => {
+          const data = typeof n.data === "object" && n.data ? { ...n.data } : {};
+          const history = data.history;
+          const isRoot = n.id === "root" || n.type === "brain";
+          let cleanedHistory;
+          if (history && typeof history === "object") {
+            const ancestors = Array.isArray(history.ancestors)
+              ? history.ancestors
+              : [];
+            cleanedHistory = {
+              ancestors,
+              ...(isRoot || (!metaPrompt && history.originalPrompt)
+                ? history.originalPrompt
+                  ? { originalPrompt: history.originalPrompt }
+                  : {}
+                : {}),
+              ...(isRoot || (!metaContext && history.originalContext)
+                ? history.originalContext
+                  ? { originalContext: history.originalContext }
+                  : {}
+                : {}),
+            };
+          }
+          if (metaPrompt && cleanedHistory) {
+            // Prefer meta over per-node prompt/context
+            delete cleanedHistory.originalPrompt;
+          }
+          if (metaContext && cleanedHistory) {
+            delete cleanedHistory.originalContext;
+          }
+          if (cleanedHistory) {
+            data.history = cleanedHistory;
+          }
+          const cleanGraphId =
+            n.graphId && mongoose.Types.ObjectId.isValid(n.graphId)
+              ? n.graphId
+              : data.graphId && mongoose.Types.ObjectId.isValid(data.graphId)
+                ? data.graphId
+                : undefined;
+          return {
+            id: n.id,
+            type: n.type,
+            position: n.position,
+            data,
+            chatId: n.chatId || n.data?.chatId || undefined,
+            ...(cleanGraphId ? { graphId: cleanGraphId } : {}),
+          };
+        })
+      : [];
+
+    // sanitize edges: drop default style if empty/undefined
+    const cleanEdges = Array.isArray(edges)
+      ? edges.map((e) => ({
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          sourceHandle: e.sourceHandle,
+          targetHandle: e.targetHandle,
+          ...(e.style ? { style: e.style } : {}),
+        }))
+      : [];
+
+    if (Array.isArray(nodes)) graph.nodes = cleanNodes;
+    if (Array.isArray(edges)) graph.edges = cleanEdges;
+
+    // store shared meta (original prompt/context)
+    if (meta && typeof meta === "object") {
+      graph.meta = {
+        originalPrompt: meta.originalPrompt || graph.meta?.originalPrompt || "",
+        originalContext:
+          meta.originalContext || graph.meta?.originalContext || "",
+      };
+    }
     graph.updatedAt = new Date();
 
     await graph.save();
 
-    // Return a minimal patch (clientId -> _id/chatId) to hydrate newly saved nodes
+    // Return a minimal patch (clientId -> _id/chatId) plus meta
     const nodePatch = Array.isArray(graph.nodes)
       ? graph.nodes.map((n) => ({
           id: n.id, // client-generated id
@@ -49,7 +128,13 @@ export const saveGraph = async (req, res) => {
         }))
       : [];
 
-    return res.status(200).json({ message: "Graph updated", nodes: nodePatch });
+    return res
+      .status(200)
+      .json({
+        message: "Graph updated",
+        nodes: nodePatch,
+        meta: graph.meta,
+      });
   } catch (err) {
     console.log(err);
     return res.status(500).json({ error: "Failed to update graph" });

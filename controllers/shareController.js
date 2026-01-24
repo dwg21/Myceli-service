@@ -11,6 +11,10 @@ const sanitizeGraphSnapshot = (graphDoc) => {
   const plain = graphDoc.toObject ? graphDoc.toObject() : graphDoc;
 
   // Strip chat references from nodes before sharing publicly
+  const meta = plain.meta || {};
+  const hasMetaPrompt = Boolean(meta.originalPrompt);
+  const hasMetaContext = Boolean(meta.originalContext);
+
   const nodes = Array.isArray(plain.nodes)
     ? plain.nodes.map((n) => {
         const node = { ...n };
@@ -18,6 +22,13 @@ const sanitizeGraphSnapshot = (graphDoc) => {
         if (node.data && typeof node.data === "object") {
           const clonedData = { ...node.data };
           delete clonedData.chatId;
+          // Remove duplicated prompt/context if meta exists
+          if (clonedData.history && typeof clonedData.history === "object") {
+            const history = { ...clonedData.history };
+            if (hasMetaPrompt) delete history.originalPrompt;
+            if (hasMetaContext) delete history.originalContext;
+            clonedData.history = history;
+          }
           node.data = clonedData;
         }
         return node;
@@ -28,6 +39,7 @@ const sanitizeGraphSnapshot = (graphDoc) => {
     graphId: plain._id?.toString(),
     title: plain.title,
     updatedAt: plain.updatedAt,
+    meta,
     nodes,
     edges: plain.edges || [],
   };
