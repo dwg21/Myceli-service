@@ -2,6 +2,7 @@ import Stripe from "stripe";
 import { env } from "../config/env.js";
 import User from "../models/User.js";
 import { getPlanCredits, getNextPeriodEnd } from "../utils/planCredits.js";
+import { sendPlanUpgradeEmail } from "../services/emailService.js";
 
 // Use Stripe's default API version for the account; override only if you have a
 // confirmed, supported version string.
@@ -42,7 +43,13 @@ const syncSubscriptionToUser = async (subscription, hintedUserId) => {
   if (!subscription) return;
   const customerId = subscription.customer;
   const priceId = subscription.items?.data?.[0]?.price?.id;
-  const plan = getPlanForPrice(priceId);
+  const plan =
+    getPlanForPrice(priceId) ||
+    (subscription.metadata?.plan === "basic" ||
+    subscription.metadata?.plan === "pro"
+      ? subscription.metadata.plan
+      : undefined);
+  const metaPlan = subscription.metadata?.plan;
   const periodStartTs = subscription.current_period_start;
   const periodEndTs = subscription.current_period_end;
 
@@ -62,6 +69,7 @@ const syncSubscriptionToUser = async (subscription, hintedUserId) => {
 
   user.stripeCustomerId = customerId;
   user.stripeSubscriptionId = subscription.id;
+  const previousPlan = user.plan || "free";
 
   if (plan && ACTIVE_SUB_STATUSES.has(subscription.status)) {
     user.plan = plan;
@@ -90,6 +98,43 @@ const syncSubscriptionToUser = async (subscription, hintedUserId) => {
   }
 
   await user.save();
+
+  if (
+    plan &&
+    plan !== "free" &&
+    previousPlan !== plan &&
+    ACTIVE_SUB_STATUSES.has(subscription.status)
+  ) {
+    console.info(
+      "[billing] upgrade email trigger",
+      JSON.stringify({
+        user: user.id,
+        email: user.email,
+        previousPlan,
+        newPlan: plan,
+        status: subscription.status,
+        priceId,
+        metaPlan,
+        subscriptionId: subscription.id,
+      })
+    );
+    sendPlanUpgradeEmail({ to: user.email, name: user.name, plan }).catch(
+      (err) => console.error("[billing] upgrade email error:", err)
+    );
+  } else {
+    console.info(
+      "[billing] upgrade email skipped",
+      JSON.stringify({
+        user: user?.id,
+        previousPlan,
+        newPlan: plan,
+        status: subscription?.status,
+        priceId,
+        metaPlan,
+        subscriptionId: subscription?.id,
+      })
+    );
+  }
 };
 
 export const createCheckoutSession = async (req, res) => {
@@ -171,6 +216,14 @@ export const createPortalSession = async (req, res) => {
 
 export const handleStripeWebhook = async (req, res) => {
   const signature = req.headers["stripe-signature"];
+  console.info(
+    "[billing] webhook hit",
+    JSON.stringify({
+      hasSignature: Boolean(signature),
+      contentType: req.headers["content-type"],
+      contentLength: req.headers["content-length"],
+    })
+  );
   if (!signature) return res.status(400).send("Missing stripe-signature");
 
   let event;
@@ -186,6 +239,7 @@ export const handleStripeWebhook = async (req, res) => {
   }
 
   try {
+    console.info("[billing] webhook event", event.type, event.id);
     switch (event.type) {
       case "checkout.session.completed": {
         const session = event.data.object;

@@ -7,7 +7,7 @@ const historyItemSchema = new mongoose.Schema(
     summary: { type: String, default: "" },
     nodeId: { type: String, default: null },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const historySchema = new mongoose.Schema(
@@ -17,7 +17,7 @@ const historySchema = new mongoose.Schema(
     originalContext: { type: String, default: "" },
     ancestors: { type: [historyItemSchema], default: [] },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const ideaSchema = new mongoose.Schema({
@@ -27,7 +27,6 @@ const ideaSchema = new mongoose.Schema({
     x: { type: Number, default: 0 },
     y: { type: Number, default: 0 },
   },
-
 
   // 💬 Linked chat
   chatId: {
@@ -66,7 +65,7 @@ const ideaGraphSchema = new mongoose.Schema(
     nodes: [ideaSchema],
     edges: [edgeSchema],
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 export const IdeaGraph = mongoose.model("IdeaGraph", ideaGraphSchema);

@@ -20,6 +20,8 @@ export const env = {
   githubClientSecret: process.env.GITHUB_CLIENT_SECRET,
   githubRedirectUri: process.env.GITHUB_REDIRECT_URI,
   frontendUrl: process.env.FRONTEND_URL || process.env.CORS_ORIGIN,
+  resendApiKey: process.env.RESEND_API_KEY,
+  supportEmail: process.env.SUPPORT_EMAIL || "support@myceliapp.com",
   stripeSecretKey: requireEnv("STRIPE_SECRET_KEY"),
   stripeWebhookSecret: requireEnv("STRIPE_WEBHOOK_SECRET"),
   stripePriceBasicMonthly: requireEnv("STRIPE_PRICE_BASIC_MONTHLY"),

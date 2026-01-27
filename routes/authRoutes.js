@@ -6,6 +6,8 @@ import {
   refresh,
   logout,
   me,
+  requestPasswordReset,
+  resetPassword,
 } from "../controllers/authController.js";
 import {
   googleAuth,
@@ -37,6 +39,15 @@ const signupSchema = credentialsSchema.extend({
   name: z.string().min(2, "Name must be at least 2 characters").optional(),
 });
 
+const forgotSchema = z.object({
+  email: z.string().email("A valid email is required"),
+});
+
+const resetSchema = z.object({
+  token: z.string().min(10, "Reset token is required"),
+  password: credentialsSchema.shape.password,
+});
+
 // -----------------------------
 // Routes
 // -----------------------------
@@ -50,6 +61,22 @@ router.post(
   authLimiter,
   validate({ body: credentialsSchema }),
   login
+);
+
+// POST /api/auth/forgot
+router.post(
+  "/forgot",
+  authLimiter,
+  validate({ body: forgotSchema }),
+  requestPasswordReset
+);
+
+// POST /api/auth/reset
+router.post(
+  "/reset",
+  authLimiter,
+  validate({ body: resetSchema }),
+  resetPassword
 );
 
 // POST /api/auth/refresh
