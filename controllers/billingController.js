@@ -9,22 +9,36 @@ import { sendPlanUpgradeEmail } from "../services/emailService.js";
 const stripe = new Stripe(env.stripeSecretKey);
 
 const PLAN_TO_PRICE = {
-  basic: env.stripePriceBasicMonthly,
-  pro: env.stripePriceProMonthly,
+  basic: {
+    monthly: env.stripePriceBasicMonthly,
+    annual: env.stripePriceBasicAnnual,
+  },
+  pro: {
+    monthly: env.stripePriceProMonthly,
+    annual: env.stripePriceProAnnual,
+  },
 };
 
 const PRICE_TO_PLAN = Object.entries(PLAN_TO_PRICE).reduce(
-  (acc, [plan, price]) => {
-    if (price) acc[price] = plan;
+  (acc, [plan, prices]) => {
+    Object.entries(prices || {}).forEach(([interval, price]) => {
+      if (price) acc[price] = { plan, interval };
+    });
     return acc;
   },
-  {}
+  {},
 );
 
-const ACTIVE_SUB_STATUSES = new Set(["active", "trialing", "past_due"]);
+const ACTIVE_SUB_STATUSES = new Set([
+  "active",
+  "trialing",
+  "past_due",
+  "incomplete",
+]);
 const frontendBase = env.frontendUrl || "http://localhost:3000";
 
-const getPriceIdForPlan = (plan) => PLAN_TO_PRICE[plan];
+const getPriceIdForPlan = (plan, interval = "monthly") =>
+  PLAN_TO_PRICE[plan]?.[interval];
 const getPlanForPrice = (priceId) => PRICE_TO_PLAN[priceId];
 
 const ensureStripeCustomer = async (user) => {
@@ -43,12 +57,15 @@ const syncSubscriptionToUser = async (subscription, hintedUserId) => {
   if (!subscription) return;
   const customerId = subscription.customer;
   const priceId = subscription.items?.data?.[0]?.price?.id;
+  const planInfo = getPlanForPrice(priceId);
   const plan =
-    getPlanForPrice(priceId) ||
+    planInfo?.plan ||
     (subscription.metadata?.plan === "basic" ||
     subscription.metadata?.plan === "pro"
       ? subscription.metadata.plan
       : undefined);
+  const planInterval =
+    planInfo?.interval || subscription.metadata?.billingInterval || "monthly";
   const metaPlan = subscription.metadata?.plan;
   const periodStartTs = subscription.current_period_start;
   const periodEndTs = subscription.current_period_end;
@@ -62,13 +79,14 @@ const syncSubscriptionToUser = async (subscription, hintedUserId) => {
       "[billing] No user matched subscription",
       subscription.id,
       "customer",
-      customerId
+      customerId,
     );
     return;
   }
 
   user.stripeCustomerId = customerId;
   user.stripeSubscriptionId = subscription.id;
+  if (planInterval) user.planInterval = planInterval;
   const previousPlan = user.plan || "free";
 
   if (plan && ACTIVE_SUB_STATUSES.has(subscription.status)) {
@@ -93,7 +111,7 @@ const syncSubscriptionToUser = async (subscription, hintedUserId) => {
   } else if (ACTIVE_SUB_STATUSES.has(subscription.status) && !plan) {
     console.warn(
       "[billing] Active subscription has unrecognized price",
-      priceId
+      priceId,
     );
   }
 
@@ -116,10 +134,10 @@ const syncSubscriptionToUser = async (subscription, hintedUserId) => {
         priceId,
         metaPlan,
         subscriptionId: subscription.id,
-      })
+      }),
     );
     sendPlanUpgradeEmail({ to: user.email, name: user.name, plan }).catch(
-      (err) => console.error("[billing] upgrade email error:", err)
+      (err) => console.error("[billing] upgrade email error:", err),
     );
   } else {
     console.info(
@@ -132,24 +150,47 @@ const syncSubscriptionToUser = async (subscription, hintedUserId) => {
         priceId,
         metaPlan,
         subscriptionId: subscription?.id,
-      })
+      }),
     );
   }
 };
 
 export const createCheckoutSession = async (req, res) => {
   try {
-    const { plan, successUrl, cancelUrl, metadata } = req.body;
+    const {
+      plan,
+      billingInterval = "monthly",
+      successUrl,
+      cancelUrl,
+      metadata,
+    } = req.body;
     if (!plan || plan === "free") {
       return res.status(400).json({ error: "A paid plan is required" });
     }
-    const priceId = getPriceIdForPlan(plan);
+    const priceId = getPriceIdForPlan(plan, billingInterval);
     if (!priceId) {
-      return res.status(400).json({ error: "Unsupported plan" });
+      return res.status(400).json({ error: "Unsupported plan or interval" });
     }
 
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ error: "User not found" });
+
+    // Prevent multiple overlapping subscriptions
+    if (user.stripeSubscriptionId) {
+      try {
+        const existing = await stripe.subscriptions.retrieve(
+          user.stripeSubscriptionId,
+        );
+        if (existing && ACTIVE_SUB_STATUSES.has(existing.status)) {
+          return res
+            .status(400)
+            .json({ error: "You already have an active subscription." });
+        }
+      } catch (err) {
+        console.warn("[billing] failed to fetch existing subscription", err);
+        // continue to allow checkout if lookup fails
+      }
+    }
 
     const customerId = await ensureStripeCustomer(user);
 
@@ -172,12 +213,14 @@ export const createCheckoutSession = async (req, res) => {
       metadata: {
         userId: user.id,
         plan,
+        billingInterval,
         ...(metadata || {}),
       },
       subscription_data: {
         metadata: {
           userId: user.id,
           plan,
+          billingInterval,
         },
       },
     });
@@ -203,8 +246,7 @@ export const createPortalSession = async (req, res) => {
     const session = await stripe.billingPortal.sessions.create({
       customer: user.stripeCustomerId,
       return_url:
-        returnUrl ||
-        `${frontendBase.replace(/\/$/, "")}/workspace/settings`,
+        returnUrl || `${frontendBase.replace(/\/$/, "")}/workspace/settings`,
     });
 
     res.json({ url: session.url });
@@ -222,7 +264,7 @@ export const handleStripeWebhook = async (req, res) => {
       hasSignature: Boolean(signature),
       contentType: req.headers["content-type"],
       contentLength: req.headers["content-length"],
-    })
+    }),
   );
   if (!signature) return res.status(400).send("Missing stripe-signature");
 
@@ -231,7 +273,7 @@ export const handleStripeWebhook = async (req, res) => {
     event = stripe.webhooks.constructEvent(
       req.body,
       signature,
-      env.stripeWebhookSecret
+      env.stripeWebhookSecret,
     );
   } catch (err) {
     console.error("[billing] webhook signature failed:", err.message);
@@ -246,11 +288,11 @@ export const handleStripeWebhook = async (req, res) => {
         if (session.mode === "subscription" && session.subscription) {
           const subscription = await stripe.subscriptions.retrieve(
             session.subscription,
-            { expand: ["items.data.price"] }
+            { expand: ["items.data.price"] },
           );
           await syncSubscriptionToUser(
             subscription,
-            session.metadata?.userId || subscription.metadata?.userId
+            session.metadata?.userId || subscription.metadata?.userId,
           );
         }
         break;
@@ -261,7 +303,7 @@ export const handleStripeWebhook = async (req, res) => {
         const subscription = event.data.object;
         await syncSubscriptionToUser(
           subscription,
-          subscription.metadata?.userId
+          subscription.metadata?.userId,
         );
         break;
       }

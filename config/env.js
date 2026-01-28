@@ -26,4 +26,7 @@ export const env = {
   stripeWebhookSecret: requireEnv("STRIPE_WEBHOOK_SECRET"),
   stripePriceBasicMonthly: requireEnv("STRIPE_PRICE_BASIC_MONTHLY"),
   stripePriceProMonthly: requireEnv("STRIPE_PRICE_PRO_MONTHLY"),
+  stripePriceBasicAnnual: requireEnv("STRIPE_PRICE_BASIC_ANNUAL"),
+  stripePriceProAnnual: requireEnv("STRIPE_PRICE_PRO_ANNUAL"),
+  termsVersion: process.env.TERMS_VERSION || "2026-01-28",
 };

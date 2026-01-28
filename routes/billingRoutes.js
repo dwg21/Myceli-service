@@ -11,6 +11,7 @@ const router = Router();
 
 const checkoutSchema = z.object({
   plan: z.enum(["basic", "pro"]),
+  billingInterval: z.enum(["monthly", "annual"]).optional(),
   successUrl: z.string().url().optional(),
   cancelUrl: z.string().url().optional(),
   metadata: z.record(z.string(), z.string()).optional(),

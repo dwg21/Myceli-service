@@ -29,7 +29,12 @@ const buildResetToken = () => {
 /* ---------------- Signup ---------------- */
 export const signup = async (req, res) => {
   try {
-    const { name, email, password, plan } = req.body;
+    const { name, email, password, plan, acceptedTerms, marketingOptIn } = req.body;
+
+    if (!acceptedTerms) {
+      return res.status(400).json({ error: "Terms must be accepted to sign up" });
+    }
+
     const exists = await User.findOne({ email });
     if (exists)
       return res.status(409).json({ error: "Email already registered" });
@@ -47,6 +52,10 @@ export const signup = async (req, res) => {
       creditsUsed: 0,
       periodStart: undefined,
       periodEnd: undefined,
+      acceptedTermsAt: new Date(),
+      termsVersion: env.termsVersion,
+      marketingOptIn: Boolean(marketingOptIn),
+      marketingOptInAt: marketingOptIn ? new Date() : undefined,
     });
 
     const { accessToken, refreshToken } = await issueTokensForUser(
@@ -68,6 +77,9 @@ export const signup = async (req, res) => {
         email: user.email,
         role: user.role,
         plan: user.plan,
+        marketingOptIn: user.marketingOptIn,
+        acceptedTermsAt: user.acceptedTermsAt,
+        termsVersion: user.termsVersion,
         creditsTotal: user.creditsTotal,
         creditsUsed: user.creditsUsed,
         periodEnd: user.periodEnd,
@@ -101,6 +113,9 @@ export const login = async (req, res) => {
         email: user.email,
         role: user.role,
         plan: user.plan || "free",
+        marketingOptIn: user.marketingOptIn,
+        acceptedTermsAt: user.acceptedTermsAt,
+        termsVersion: user.termsVersion,
         creditsTotal: user.creditsTotal,
         creditsUsed: user.creditsUsed,
         periodEnd: user.periodEnd,
@@ -149,7 +164,7 @@ export const me = async (req, res) => {
   }
 
   try {
-    const user = await User.findById(req.user.id).select("name email role plan creditsTotal creditsUsed periodEnd");
+    const user = await User.findById(req.user.id).select("name email role plan planInterval creditsTotal creditsUsed periodEnd marketingOptIn acceptedTermsAt termsVersion");
     if (!user) return res.status(404).json({ error: "User not found" });
 
     res.json({
@@ -159,6 +174,10 @@ export const me = async (req, res) => {
         email: user.email,
         role: user.role,
         plan: user.plan || "free",
+        planInterval: user.planInterval || "monthly",
+        marketingOptIn: user.marketingOptIn,
+        acceptedTermsAt: user.acceptedTermsAt,
+        termsVersion: user.termsVersion,
         creditsTotal: user.creditsTotal,
         creditsUsed: user.creditsUsed,
         periodEnd: user.periodEnd,

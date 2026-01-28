@@ -8,6 +8,7 @@ const userSchema = new mongoose.Schema({
   password: { type: String, required: true },
   role: { type: String, enum: ["user", "admin"], default: "user" },
   plan: { type: String, enum: ["free", "basic", "pro"], default: "free" },
+  planInterval: { type: String, enum: ["monthly", "annual"], default: "monthly" },
   creditsTotal: {
     type: Number,
     default: function () {
@@ -31,6 +32,10 @@ const userSchema = new mongoose.Schema({
   ],
   stripeCustomerId: { type: String },
   stripeSubscriptionId: { type: String },
+  acceptedTermsAt: { type: Date },
+  termsVersion: { type: String },
+  marketingOptIn: { type: Boolean, default: false },
+  marketingOptInAt: { type: Date },
 });
 
 userSchema.pre("save", async function (next) {
