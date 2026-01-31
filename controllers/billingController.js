@@ -41,6 +41,21 @@ const getPriceIdForPlan = (plan, interval = "monthly") =>
   PLAN_TO_PRICE[plan]?.[interval];
 const getPlanForPrice = (priceId) => PRICE_TO_PLAN[priceId];
 
+const TOPUP_PACKS = {
+  "credits-small": {
+    credits: 400, // ~$5
+    price: env.stripeTopupSmall,
+  },
+  "credits-medium": {
+    credits: 900, // ~$10
+    price: env.stripeTopupMedium,
+  },
+  "credits-large": {
+    credits: 2000, // ~$20
+    price: env.stripeTopupLarge,
+  },
+};
+
 const ensureStripeCustomer = async (user) => {
   if (user.stripeCustomerId) return user.stripeCustomerId;
   const customer = await stripe.customers.create({
@@ -69,6 +84,20 @@ const syncSubscriptionToUser = async (subscription, hintedUserId) => {
   const metaPlan = subscription.metadata?.plan;
   const periodStartTs = subscription.current_period_start;
   const periodEndTs = subscription.current_period_end;
+  const cancelAtPeriodEnd = Boolean(subscription.cancel_at_period_end);
+
+  const pendingUpdate = subscription.pending_update;
+  const pendingPriceId = pendingUpdate?.items?.data?.[0]?.price?.id;
+  const pendingPlanInfo = pendingPriceId ? getPlanForPrice(pendingPriceId) : null;
+  const pendingPlan =
+    pendingPlanInfo?.plan ||
+    (pendingUpdate?.metadata?.plan === "basic" || pendingUpdate?.metadata?.plan === "pro"
+      ? pendingUpdate.metadata.plan
+      : null);
+  const pendingEffectiveTs =
+    pendingUpdate?.effective_at ||
+    pendingUpdate?.billing_cycle_anchor ||
+    (cancelAtPeriodEnd ? periodEndTs : null);
 
   const user =
     (hintedUserId && (await User.findById(hintedUserId))) ||
@@ -89,15 +118,31 @@ const syncSubscriptionToUser = async (subscription, hintedUserId) => {
   if (planInterval) user.planInterval = planInterval;
   const previousPlan = user.plan || "free";
 
+  let pendingPlanTo = null;
+  let pendingPlanEffectiveAt = null;
+
   if (plan && ACTIVE_SUB_STATUSES.has(subscription.status)) {
     user.plan = plan;
     user.creditsTotal = getPlanCredits(plan);
     user.creditsUsed = 0;
-    if (Number.isFinite(periodStartTs)) {
-      user.periodStart = new Date(periodStartTs * 1000);
-    }
+    // Credits always reset monthly regardless of annual billing cadence
+    const now = new Date();
+    user.periodStart = now;
+    user.periodEnd = getNextPeriodEnd(now);
     if (Number.isFinite(periodEndTs)) {
-      user.periodEnd = new Date(periodEndTs * 1000);
+      user.planRenewalAt = new Date(periodEndTs * 1000);
+    }
+    // track scheduled downgrade/upgrade at period end
+    if (pendingPlan && pendingPlan !== plan) {
+      pendingPlanTo = pendingPlan;
+      if (Number.isFinite(pendingEffectiveTs)) {
+        pendingPlanEffectiveAt = new Date(pendingEffectiveTs * 1000);
+      }
+    } else if (cancelAtPeriodEnd) {
+      pendingPlanTo = "free";
+      if (Number.isFinite(periodEndTs)) {
+        pendingPlanEffectiveAt = new Date(periodEndTs * 1000);
+      }
     }
   } else if (
     ["canceled", "unpaid", "incomplete_expired"].includes(subscription.status)
@@ -108,12 +153,19 @@ const syncSubscriptionToUser = async (subscription, hintedUserId) => {
     user.creditsUsed = 0;
     user.periodStart = now;
     user.periodEnd = getNextPeriodEnd(now);
+    user.planRenewalAt = undefined;
+    pendingPlanTo = null;
+    pendingPlanEffectiveAt = null;
   } else if (ACTIVE_SUB_STATUSES.has(subscription.status) && !plan) {
     console.warn(
       "[billing] Active subscription has unrecognized price",
       priceId,
     );
   }
+
+  user.planChangeTo = pendingPlanTo || undefined;
+  user.planChangeEffectiveAt = pendingPlanEffectiveAt || undefined;
+  user.planRenewalAt = user.planRenewalAt || (Number.isFinite(periodEndTs) ? new Date(periodEndTs * 1000) : undefined);
 
   await user.save();
 
@@ -256,6 +308,65 @@ export const createPortalSession = async (req, res) => {
   }
 };
 
+export const createTopupSession = async (req, res) => {
+  try {
+    const { packId, successUrl, cancelUrl } = req.body;
+    const pack = TOPUP_PACKS[packId];
+    if (!pack) return res.status(400).json({ error: "Unsupported pack" });
+
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const priceId = pack.price;
+
+    if (!priceId) {
+      return res
+        .status(400)
+        .json({ error: "Top-up pricing is not configured. Contact support." });
+    }
+
+    const customerId = await ensureStripeCustomer(user);
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      customer: customerId,
+      line_items: [
+        {
+          price: priceId,
+          quantity: 1,
+        },
+      ],
+      allow_promotion_codes: true,
+      success_url:
+        successUrl ||
+        `${frontendBase.replace(/\/$/, "")}/workspace/settings?topup=success`,
+      cancel_url:
+        cancelUrl ||
+        `${frontendBase.replace(/\/$/, "")}/workspace/settings?topup=cancelled`,
+      metadata: {
+        userId: user.id,
+        packId,
+        packCredits: pack.credits.toString(),
+        planAtPurchase: user.plan || "free",
+        source: "topup",
+      },
+      payment_intent_data: {
+        metadata: {
+          userId: user.id,
+          packId,
+          packCredits: pack.credits.toString(),
+          source: "topup",
+        },
+      },
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error("[billing] create topup session error:", err);
+    res.status(500).json({ error: "Failed to create top-up session" });
+  }
+};
+
 export const handleStripeWebhook = async (req, res) => {
   const signature = req.headers["stripe-signature"];
   console.info(
@@ -294,6 +405,25 @@ export const handleStripeWebhook = async (req, res) => {
             subscription,
             session.metadata?.userId || subscription.metadata?.userId,
           );
+        }
+        if (session.mode === "payment" && session.metadata?.source === "topup") {
+          const userId = session.metadata.userId;
+          const packCredits = Number(session.metadata.packCredits || 0);
+          if (userId && packCredits > 0) {
+            const user = await User.findById(userId);
+            if (user) {
+              user.creditsBonus = (user.creditsBonus || 0) + packCredits;
+              await user.save();
+              console.info("[billing] top-up applied", {
+                user: userId,
+                creditsAdded: packCredits,
+              });
+            } else {
+              console.warn("[billing] top-up user not found", userId);
+            }
+          } else {
+            console.warn("[billing] top-up session missing metadata", session.id);
+          }
         }
         break;
       }

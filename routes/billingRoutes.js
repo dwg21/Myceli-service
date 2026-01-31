@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   createCheckoutSession,
   createPortalSession,
+  createTopupSession,
 } from "../controllers/billingController.js";
 import { requireAuth } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
@@ -33,6 +34,19 @@ router.post(
     }),
   }),
   createPortalSession
+);
+
+router.post(
+  "/create-topup-session",
+  requireAuth,
+  validate({
+    body: z.object({
+      packId: z.enum(["credits-small", "credits-medium", "credits-large"]),
+      successUrl: z.string().url().optional(),
+      cancelUrl: z.string().url().optional(),
+    }),
+  }),
+  createTopupSession
 );
 
 export default router;

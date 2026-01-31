@@ -9,6 +9,9 @@ const userSchema = new mongoose.Schema({
   role: { type: String, enum: ["user", "admin"], default: "user" },
   plan: { type: String, enum: ["free", "basic", "pro"], default: "free" },
   planInterval: { type: String, enum: ["monthly", "annual"], default: "monthly" },
+  planChangeTo: { type: String, enum: ["free", "basic", "pro"], default: undefined },
+  planChangeEffectiveAt: { type: Date },
+  planRenewalAt: { type: Date },
   creditsTotal: {
     type: Number,
     default: function () {
@@ -16,6 +19,7 @@ const userSchema = new mongoose.Schema({
     },
   },
   creditsUsed: { type: Number, default: 0 },
+  creditsBonus: { type: Number, default: 0 },
   periodStart: { type: Date, default: () => new Date() },
   periodEnd: {
     type: Date,

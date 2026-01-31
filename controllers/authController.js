@@ -18,10 +18,7 @@ const RESET_TOKEN_TTL_MINUTES = 60;
 
 const buildResetToken = () => {
   const token = crypto.randomBytes(32).toString("hex");
-  const tokenHash = crypto
-    .createHash("sha256")
-    .update(token)
-    .digest("hex");
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
   const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000);
   return { token, tokenHash, expiresAt };
 };
@@ -29,25 +26,27 @@ const buildResetToken = () => {
 /* ---------------- Signup ---------------- */
 export const signup = async (req, res) => {
   try {
-    const { name, email, password, plan, acceptedTerms, marketingOptIn } = req.body;
+    const { name, email, password, plan, acceptedTerms, marketingOptIn } =
+      req.body;
 
     if (!acceptedTerms) {
-      return res.status(400).json({ error: "Terms must be accepted to sign up" });
+      return res
+        .status(400)
+        .json({ error: "Terms must be accepted to sign up" });
     }
 
     const exists = await User.findOne({ email });
     if (exists)
       return res.status(409).json({ error: "Email already registered" });
 
-    const normalizedPlan =
+    const selectedPlanIntent =
       plan === "pro" || plan === "basic" ? plan : "free";
-    const startPlan = normalizedPlan === "free" ? "free" : "free"; // paid plans activate after Stripe webhook
 
     const user = await User.create({
       name,
       email,
       password,
-      plan: startPlan,
+      plan: "free", // paid plans activate after Stripe webhook
       creditsTotal: undefined, // use schema default per plan
       creditsUsed: 0,
       periodStart: undefined,
@@ -58,16 +57,16 @@ export const signup = async (req, res) => {
       marketingOptInAt: marketingOptIn ? new Date() : undefined,
     });
 
-    const { accessToken, refreshToken } = await issueTokensForUser(
-      user,
-      req
-    );
+    const { accessToken, refreshToken } = await issueTokensForUser(user, req);
     setRefreshCookie(res, refreshToken);
 
     // Fire-and-forget welcome email; don't block signup if email fails
-    sendWelcomeEmail({ to: user.email, name: user.name, plan: user.plan }).catch(
-      (err) => console.error("Welcome email error:", err)
-    );
+    sendWelcomeEmail({
+      to: user.email,
+      name: user.name,
+      plan: user.plan,
+      intent: selectedPlanIntent,
+    }).catch((err) => console.error("Welcome email error:", err));
 
     res.json({
       accessToken,
@@ -77,6 +76,11 @@ export const signup = async (req, res) => {
         email: user.email,
         role: user.role,
         plan: user.plan,
+        planChangeTo: user.planChangeTo,
+        planChangeEffectiveAt: user.planChangeEffectiveAt,
+        planRenewalAt: user.planRenewalAt,
+        creditsBonus: user.creditsBonus,
+        planIntent: selectedPlanIntent,
         marketingOptIn: user.marketingOptIn,
         acceptedTermsAt: user.acceptedTermsAt,
         termsVersion: user.termsVersion,
@@ -100,10 +104,7 @@ export const login = async (req, res) => {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    const { accessToken, refreshToken } = await issueTokensForUser(
-      user,
-      req
-    );
+    const { accessToken, refreshToken } = await issueTokensForUser(user, req);
     setRefreshCookie(res, refreshToken);
     res.json({
       accessToken,
@@ -113,6 +114,10 @@ export const login = async (req, res) => {
         email: user.email,
         role: user.role,
         plan: user.plan || "free",
+        planChangeTo: user.planChangeTo,
+        planChangeEffectiveAt: user.planChangeEffectiveAt,
+        planRenewalAt: user.planRenewalAt,
+        creditsBonus: user.creditsBonus,
         marketingOptIn: user.marketingOptIn,
         acceptedTermsAt: user.acceptedTermsAt,
         termsVersion: user.termsVersion,
@@ -136,7 +141,9 @@ export const refresh = async (req, res) => {
     const decoded = jwt.verify(rt, env.refreshSecret);
     const rotated = await rotateRefreshToken(rt, decoded, req);
     if (!rotated) {
-      return res.status(401).json({ error: "Invalid or expired refresh token" });
+      return res
+        .status(401)
+        .json({ error: "Invalid or expired refresh token" });
     }
     setRefreshCookie(res, rotated.refreshToken);
     res.json({ accessToken: rotated.accessToken });
@@ -164,7 +171,9 @@ export const me = async (req, res) => {
   }
 
   try {
-    const user = await User.findById(req.user.id).select("name email role plan planInterval creditsTotal creditsUsed periodEnd marketingOptIn acceptedTermsAt termsVersion");
+    const user = await User.findById(req.user.id).select(
+      "name email role plan planInterval planChangeTo planChangeEffectiveAt planRenewalAt creditsTotal creditsUsed creditsBonus periodEnd marketingOptIn acceptedTermsAt termsVersion",
+    );
     if (!user) return res.status(404).json({ error: "User not found" });
 
     res.json({
@@ -175,6 +184,10 @@ export const me = async (req, res) => {
         role: user.role,
         plan: user.plan || "free",
         planInterval: user.planInterval || "monthly",
+        planChangeTo: user.planChangeTo,
+        planChangeEffectiveAt: user.planChangeEffectiveAt,
+        planRenewalAt: user.planRenewalAt,
+        creditsBonus: user.creditsBonus,
         marketingOptIn: user.marketingOptIn,
         acceptedTermsAt: user.acceptedTermsAt,
         termsVersion: user.termsVersion,
@@ -193,7 +206,8 @@ export const me = async (req, res) => {
 export const requestPasswordReset = async (req, res) => {
   const { email } = req.body;
   const genericResponse = {
-    message: "If an account exists for that email, we'll send reset instructions.",
+    message:
+      "If an account exists for that email, we'll send reset instructions.",
   };
 
   try {
@@ -230,10 +244,7 @@ export const resetPassword = async (req, res) => {
   const { token, password } = req.body;
 
   try {
-    const tokenHash = crypto
-      .createHash("sha256")
-      .update(token)
-      .digest("hex");
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
 
     const reset = await PasswordResetToken.findOne({
       tokenHash,
@@ -258,7 +269,10 @@ export const resetPassword = async (req, res) => {
     reset.usedAt = new Date();
     await reset.save();
     // Remove any other reset tokens for this user now that this one is consumed
-    await PasswordResetToken.deleteMany({ user: user._id, _id: { $ne: reset._id } });
+    await PasswordResetToken.deleteMany({
+      user: user._id,
+      _id: { $ne: reset._id },
+    });
 
     res.json({ message: "Password reset successful" });
   } catch (err) {

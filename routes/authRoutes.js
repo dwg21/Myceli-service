@@ -34,9 +34,14 @@ const credentialsSchema = z.object({
     .max(64, "Password too long"),
 });
 
-// Signup schema extends credentials with optional name
+// Signup schema extends credentials and requires terms acceptance
 const signupSchema = credentialsSchema.extend({
   name: z.string().min(2, "Name must be at least 2 characters").optional(),
+  plan: z.enum(["free", "basic", "pro"]).optional(),
+  acceptedTerms: z
+    .coerce.boolean()
+    .refine((v) => v === true, { message: "Terms must be accepted to sign up" }),
+  marketingOptIn: z.coerce.boolean().optional(),
 });
 
 const forgotSchema = z.object({

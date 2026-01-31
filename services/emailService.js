@@ -90,14 +90,15 @@ export async function sendPasswordResetEmail({
   console.info("Password reset email queued:", data?.id);
 }
 
-export async function sendWelcomeEmail({ to, name, plan = "free" }) {
+export async function sendWelcomeEmail({ to, name, plan = "free", intent }) {
   if (!resend) {
     console.warn("Resend API key missing; skipping welcome email dispatch.");
     return;
   }
 
   const displayName = name || "there";
-  const dashboardUrl = `${frontendUrl}/app`;
+  const dashboardUrl = `${frontendUrl}/workspace`;
+  const choosePlanUrl = `${frontendUrl}/choose-experience`;
 
   const html = `
     <table cellpadding="0" cellspacing="0" width="100%" style="font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8faf9; padding: 24px 0;">
@@ -107,20 +108,23 @@ export async function sendWelcomeEmail({ to, name, plan = "free" }) {
             <tr>
               <td style="text-align: left; color: #0a1f14;">
                 <p style="margin: 0 0 8px; letter-spacing: 0.08em; text-transform: uppercase; font-size: 11px; color: #4b5e55;">Welcome aboard</p>
-                <h2 style="margin: 0 0 12px; font-size: 24px; color: #0a1f14;">Hey ${displayName}, you’re in! 🎉</h2>
+                <h2 style="margin: 0 0 12px; font-size: 24px; color: #0a1f14;">Hey ${displayName}, your workspace is live 🎉</h2>
                 <p style="margin: 0 0 16px; color: #4b5e55; line-height: 1.6;">
-                  Thanks for joining ${productName}. Your account is active on the <strong>${plan}</strong> plan. Let’s build some beautiful mind maps.
+                  You’re starting on the <strong>${plan}</strong> experience so you can explore without entering payment details. Pick Basic or Pro anytime—one click from inside the app.
                 </p>
                 <p style="margin: 0 0 16px; color: #4b5e55; line-height: 1.6;">
-                  Jump back into your workspace any time:
+                  Jump into Myceli to create your first board. If you already know you want ${
+                    intent === "pro" ? "Pro" : intent === "basic" ? "Basic" : "a paid plan"
+                  }, you can select it right after you sign in.
                 </p>
                 <p style="text-align: center; margin: 24px 0;">
-                  <a href="${dashboardUrl}" style="background: #003f36; color: #ffffff; padding: 12px 20px; border-radius: 12px; text-decoration: none; font-weight: 600; display: inline-block;">
-                    Open Myceli
-                  </a>
+                  <a href="${dashboardUrl}" style="background: #003f36; color: #ffffff; padding: 12px 20px; border-radius: 12px; text-decoration: none; font-weight: 600; display: inline-block;">Enter Myceli</a>
+                </p>
+                <p style="text-align: center; margin: 4px 0 24px;">
+                  <a href="${choosePlanUrl}" style="color: #0a1f14; font-weight: 600; text-decoration: underline; text-decoration-thickness: 2px;">Choose your experience</a>
                 </p>
                 <p style="margin: 0 0 16px; color: #4b5e55; line-height: 1.6;">
-                  If you expected a different plan or need help migrating content, just hit reply—we’re real humans.
+                  Need a hand? Reply to this email and a human will help set you up.
                 </p>
                 <p style="margin: 16px 0 0; color: #6b7a72; font-size: 13px; line-height: 1.6;">
                   Thanks for building with us,<br/>
@@ -136,11 +140,12 @@ export async function sendWelcomeEmail({ to, name, plan = "free" }) {
   `;
 
   const text = [
-    `Hey ${displayName}, you’re in!`,
-    `Welcome to ${productName}. Your account is active on the ${plan} plan.`,
+    `Hey ${displayName}, your ${productName} workspace is live.`,
+    `You’re starting on the ${plan} experience. Explore freely and pick Basic or Pro anytime.`,
     `Open your workspace: ${dashboardUrl}`,
+    `Choose your experience: ${choosePlanUrl}`,
     "",
-    "If you expected a different plan or need help, just reply to this email.",
+    "Need help deciding? Reply and we’ll recommend the right plan.",
     "",
     "— The Myceli team",
   ].join("\n");
@@ -176,17 +181,17 @@ export async function sendPlanUpgradeEmail({ to, name, plan }) {
             <tr>
               <td style="text-align: left; color: #0a1f14;">
                 <p style="margin: 0 0 8px; letter-spacing: 0.08em; text-transform: uppercase; font-size: 11px; color: #4b5e55;">Plan updated</p>
-                <h2 style="margin: 0 0 12px; font-size: 24px; color: #0a1f14;">You’ve upgraded to ${plan} 🎉</h2>
+                <h2 style="margin: 0 0 12px; font-size: 24px; color: #0a1f14;">You chose ${plan} 🎉</h2>
                 <p style="margin: 0 0 16px; color: #4b5e55; line-height: 1.6;">
-                  Thanks, ${displayName}! Your ${productName} account is now on the <strong>${plan}</strong> plan. Extra credits and pro features are ready for you.
+                  Thanks, ${displayName}! Your ${productName} account is now on the <strong>${plan}</strong> plan. Extra credits, higher AI limits, and sharing controls are unlocked.
                 </p>
                 <p style="text-align: center; margin: 24px 0;">
                   <a href="${billingUrl}" style="background: #003f36; color: #ffffff; padding: 12px 20px; border-radius: 12px; text-decoration: none; font-weight: 600; display: inline-block;">
-                    View billing & benefits
+                    View your benefits
                   </a>
                 </p>
                 <p style="margin: 0 0 16px; color: #4b5e55; line-height: 1.6;">
-                  Need an invoice or have questions? Reply to this email and we’ll help right away.
+                  Need an invoice or want teammates added? Reply to this email and we’ll help right away.
                 </p>
                 <p style="margin: 16px 0 0; color: #6b7a72; font-size: 13px; line-height: 1.6;">
                   Grateful to have you leveling up with us,<br/>
@@ -202,9 +207,9 @@ export async function sendPlanUpgradeEmail({ to, name, plan }) {
   `;
 
   const text = [
-    `You’ve upgraded to ${plan}!`,
-    `Thanks ${displayName}. Your ${productName} account is now on the ${plan} plan with more credits and features.`,
-    `View billing: ${billingUrl}`,
+    `You chose ${plan}!`,
+    `Thanks ${displayName}. Your ${productName} account now has more credits, higher AI limits, and sharing controls.`,
+    `See your benefits: ${billingUrl}`,
     "",
     "Need an invoice or help? Just reply to this email.",
     "",

@@ -28,5 +28,8 @@ export const env = {
   stripePriceProMonthly: requireEnv("STRIPE_PRICE_PRO_MONTHLY"),
   stripePriceBasicAnnual: requireEnv("STRIPE_PRICE_BASIC_ANNUAL"),
   stripePriceProAnnual: requireEnv("STRIPE_PRICE_PRO_ANNUAL"),
+  stripeTopupSmall: process.env.STRIPE_TOPUP_SMALL,
+  stripeTopupMedium: process.env.STRIPE_TOPUP_MEDIUM,
+  stripeTopupLarge: process.env.STRIPE_TOPUP_LARGE,
   termsVersion: process.env.TERMS_VERSION || "2026-01-28",
 };
