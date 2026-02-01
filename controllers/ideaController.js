@@ -5,7 +5,7 @@ import {
   uploadIdeaImage,
 } from "../services/storageService.js";
 import crypto from "crypto";
-import { resolveTextModel } from "../services/modelRouter.js";
+import { resolveTextModel, resolveImageModel } from "../services/modelRouter.js";
 import { streamText } from "ai";
 
 const IMAGE_PRESETS = {
@@ -646,6 +646,17 @@ export async function generateIdeaImage(req, res, next) {
       typeof req.body?.generationPreset === "string"
         ? req.body.generationPreset
         : "standard";
+    const requestedModelIds = Array.isArray(req.body?.modelIds)
+      ? req.body.modelIds.filter((m) => typeof m === "string" && m.trim())
+      : [];
+
+    // Map preset → default model choice when none explicitly selected
+    const presetDefaultMap = {
+      standard: "google/imagen-4.0-fast-generate-001", // lower cost
+      balanced: "google/imagen-4.0-generate-001", // default balanced
+      "high-detail": "google/imagen-4.0-ultra-generate-001", // highest quality
+    };
+
     const imageSettings = resolveImageSettings(generationPreset);
     const incomingHistory = normalizeHistory(
       typeof req.body?.history === "object" ? req.body.history : {},
@@ -685,43 +696,150 @@ export async function generateIdeaImage(req, res, next) {
     ].filter(Boolean);
 
     const prompt = promptParts.join("\n");
-    const client = getOpenAIClient();
+    const targetModelIds =
+      requestedModelIds.length > 0
+        ? requestedModelIds
+        : [
+            presetDefaultMap[generationPreset] ||
+              resolveImageModel()?.id ||
+              "openai/gpt-image-1",
+          ];
 
-    const response = await client.images.generate({
-      model: "gpt-image-1",
-      prompt,
-      size: imageSettings.size,
-      quality: imageSettings.quality,
-      n: 1,
-    });
+    const results = [];
+    for (const mid of targetModelIds) {
+      try {
+        const model = resolveImageModel(mid);
+        if (model.provider === "openai") {
+          const client = getOpenAIClient();
+          const response = await client.images.generate({
+            model: model.modelName || model.id?.replace("openai/", "") || "gpt-image-1",
+            prompt,
+            size: imageSettings.size,
+            quality: imageSettings.quality,
+            n: 1,
+          });
+          const imageData = response?.data?.[0];
+          if (!imageData?.b64_json && !imageData?.url) {
+            throw new Error("No image returned");
+          }
+          const hostedUrl = await persistGeneratedImage({
+            imageData,
+            userId,
+            ideaTitle,
+          });
+          if (!hostedUrl) {
+            throw new Error("Image upload failed");
+          }
+          results.push({
+            modelId: model.id,
+            imageUrl: hostedUrl,
+            promptUsed: prompt,
+          });
+          continue;
+        }
 
-    const imageData = response?.data?.[0];
-    if (!imageData?.b64_json && !imageData?.url) {
+        if (model.provider === "google") {
+          const apiKey = process.env.GOOGLE_API_KEY;
+          if (!apiKey) {
+            throw new Error("Missing GOOGLE_API_KEY");
+          }
+
+          const aspectRatio =
+            imageSettings?.size === "1024x1024" ? "1:1" : "1:1";
+          const promptText = (prompt || "").trim();
+          if (!promptText) {
+            throw new Error("Missing text content.");
+          }
+          const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model.modelName}:predict?key=${apiKey}`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                instances: [
+                  {
+                    // Imagen predict expects the raw text prompt
+                    prompt: promptText,
+                  },
+                ],
+                parameters: {
+                  sampleCount: 1,
+                  aspectRatio,
+                },
+              }),
+            },
+          );
+
+          if (!response.ok) {
+            const errJson = await response.json().catch(() => ({}));
+            const msg =
+              errJson?.error?.message ||
+              `${response.status} ${response.statusText}`;
+            throw new Error(`Google Imagen error: ${msg}`);
+          }
+
+          const json = await response.json();
+          const prediction =
+            Array.isArray(json?.predictions) && json.predictions[0]
+              ? json.predictions[0]
+              : null;
+          const base64 =
+            prediction?.bytesBase64Encoded ||
+            prediction?.base64Image ||
+            prediction?.imageBase64;
+          const url =
+            prediction?.uri ||
+            prediction?.imageUri ||
+            prediction?.media || // some responses use media uri
+            null;
+
+          if (!base64 && !url) {
+            throw new Error("Google Imagen returned no image data");
+          }
+
+          const hostedUrl = await persistGeneratedImage({
+            imageData: base64
+              ? { b64_json: base64 }
+              : { url },
+            userId,
+            ideaTitle,
+          });
+
+          if (!hostedUrl) {
+            throw new Error("Image upload failed");
+          }
+
+          results.push({
+            modelId: model.id,
+            imageUrl: hostedUrl,
+            promptUsed: prompt,
+          });
+          continue;
+        }
+
+        results.push({
+          modelId: model?.id || mid,
+          error: "Unsupported image provider",
+        });
+      } catch (err) {
+        results.push({
+          modelId: mid,
+          error: err?.message || "Failed to generate image",
+        });
+      }
+    }
+
+    const successes = results.filter((r) => r.imageUrl);
+    if (!successes.length) {
       return res.status(502).json({
-        error: "Image generation failed: no image returned",
+        error: "Image generation failed for all models",
+        results,
       });
     }
 
-    const hostedUrl = await persistGeneratedImage({
-      imageData,
-      userId,
-      ideaTitle,
-    });
-
-    if (!hostedUrl) {
-      const reason = storageAvailable
-        ? "upload_failed"
-        : "storage_not_configured";
-      return res.status(502).json({
-        error: "Image upload failed. Storage may be misconfigured.",
-        reason,
-      });
-    }
-
-    return res.status(200).json({
-      imageUrl: hostedUrl,
-      promptUsed: prompt,
-    });
+    return res.status(200).json({ results });
   } catch (err) {
     console.error("Unexpected error in generateIdeaImage:", err);
     return next(err);

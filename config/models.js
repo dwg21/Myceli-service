@@ -74,6 +74,56 @@ export const MODEL_CATALOG = {
     displayName: "Gemini 2.5 Pro",
     default: false,
   },
+  // ----------------------- IMAGE MODELS -------------------------------------
+  "openai/gpt-image-1": {
+    id: "openai/gpt-image-1",
+    provider: "openai",
+    type: "image",
+    capabilities: ["image"],
+    unitCost: {
+      inputPer1k: 0.000004, // placeholder
+      outputPer1k: 0.000016,
+    },
+    displayName: "DALL·E (OpenAI)",
+    default: false,
+  },
+  // ----------------------- IMAGE MODELS (Google Imagen) ----------------------
+  "google/imagen-4.0-generate-001": {
+    id: "google/imagen-4.0-generate-001",
+    provider: "google",
+    type: "image",
+    capabilities: ["image"],
+    unitCost: {
+      inputPer1k: 0.000002, // placeholder; adjust when pricing is finalized
+      outputPer1k: 0.000012,
+    },
+    displayName: "Imagen 4",
+    default: true, // balanced/standard default
+  },
+  "google/imagen-4.0-fast-generate-001": {
+    id: "google/imagen-4.0-fast-generate-001",
+    provider: "google",
+    type: "image",
+    capabilities: ["image"],
+    unitCost: {
+      inputPer1k: 0.0000012,
+      outputPer1k: 0.000006,
+    },
+    displayName: "Imagen 4 Fast",
+    default: false,
+  },
+  "google/imagen-4.0-ultra-generate-001": {
+    id: "google/imagen-4.0-ultra-generate-001",
+    provider: "google",
+    type: "image",
+    capabilities: ["image"],
+    unitCost: {
+      inputPer1k: 0.000004,
+      outputPer1k: 0.00002,
+    },
+    displayName: "Imagen 4 Ultra",
+    default: false,
+  },
 };
 
 export function getDefaultModelId(type = "text") {

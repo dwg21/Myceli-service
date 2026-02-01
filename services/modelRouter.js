@@ -79,7 +79,13 @@ export function resolveImageModel(modelId) {
     (getDefaultModelId("image") && MODEL_CATALOG[getDefaultModelId("image")]);
   if (!model) {
     // Fall back to existing implicit OpenAI image model string
-    return { id: null, provider: "openai", modelName: "dall-e-3" };
+    return { id: "openai/gpt-image-1", provider: "openai", modelName: "gpt-image-1" };
+  }
+  if (model.provider === "openai") {
+    return { ...model, modelName: model.id.replace("openai/", "") };
+  }
+  if (model.provider === "google") {
+    return { ...model, modelName: model.id.replace("google/", "") };
   }
   return model;
 }
