@@ -1,8 +1,7 @@
-import { getOpenAIClient } from "../utils/openaiClient.js";
 import { Chat } from "../models/Chat.js";
 import { IdeaGraph } from "../models/ideaGraph.js";
 import { streamText } from "ai";
-import { openai } from "@ai-sdk/openai";
+import { resolveTextModel } from "../services/modelRouter.js";
 
 const normalizeHistory = (history, fallbackPrompt = "") => {
   const originalPrompt =
@@ -75,11 +74,18 @@ const buildSystemMessage = (ideaTitle, history) => {
  */
 export async function createIdeaChat(req, res, next) {
   try {
-    const { ideaTitle, history: rawHistory, graphId, ideaId } = req.body;
+    const {
+      ideaTitle,
+      history: rawHistory,
+      graphId,
+      ideaId,
+      modelId: requestedModelId,
+    } = req.body;
     const userId = req.user.id;
     const wantsStream =
       req.headers?.accept?.includes("text/event-stream") ||
       req.query?.stream === "1";
+    const model = resolveTextModel(requestedModelId);
 
     // --- Validation ---
     if (!ideaTitle?.trim()) {
@@ -111,6 +117,10 @@ export async function createIdeaChat(req, res, next) {
     });
 
     if (existingChat) {
+      if (!existingChat.modelId) {
+        existingChat.modelId = model.id;
+        await existingChat.save();
+      }
       // Ensure the graph node is tagged with the chatId (idempotent)
       await IdeaGraph.updateOne(
         { _id: graphId, user: userId, "nodes.id": ideaId },
@@ -134,6 +144,7 @@ export async function createIdeaChat(req, res, next) {
       history,
       systemMessage,
       messages: [],
+      modelId: model.id,
     });
 
     // --- Attach chatId to the graph node ---
@@ -146,14 +157,28 @@ export async function createIdeaChat(req, res, next) {
       // Non-streaming fallback: generate full first reply synchronously
       let initialReply = "";
       try {
-        const client = getOpenAIClient();
-        const response = await client.responses.create({
-          model: "gpt-4o-mini",
-          input: [systemMessage, { role: "user", content: initialPrompt }],
-          text: { format: { type: "text" } },
-          temperature: 0.7,
-        });
-        initialReply = response.output_text?.trim() || "";
+        if (model.provider === "google") {
+          const gModel = model.genAI.getGenerativeModel({
+            model: model.modelName,
+          });
+          const promptText = [
+            systemMessage.content,
+            `User: ${initialPrompt}`,
+          ]
+            .filter(Boolean)
+            .join("\n\n");
+          const response = await gModel.generateContent({
+            contents: [{ role: "user", parts: [{ text: promptText }] }],
+          });
+          initialReply = response.response?.text() || "";
+        } else {
+          const result = await streamText({
+            model: model.aiModel,
+            messages: [systemMessage, { role: "user", content: initialPrompt }],
+            temperature: 0.7,
+          });
+          initialReply = (await result.text) || "";
+        }
       } catch (err) {
         console.error("❌ Failed to generate initial chat reply:", err);
         initialReply =
@@ -177,6 +202,7 @@ export async function createIdeaChat(req, res, next) {
         chat,
         node: { id: ideaId, chatId: chat._id },
         initialPrompt,
+        modelId: model.id,
       });
     }
 
@@ -196,8 +222,39 @@ export async function createIdeaChat(req, res, next) {
       { role: "user", content: initialPrompt },
     ];
 
+    if (model.provider === "google") {
+      const gModel = model.genAI.getGenerativeModel({
+        model: model.modelName,
+      });
+      const promptText = messagesForModel
+        .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
+        .join("\n\n");
+      const response = await gModel.generateContent({
+        contents: [{ role: "user", parts: [{ text: promptText }] }],
+      });
+      const fullReply = response.response?.text() || "";
+
+      chat.messages = [
+        { role: "user", content: initialPrompt },
+        { role: "assistant", content: fullReply },
+      ];
+      chat.systemMessage = systemMessage;
+      chat.modelId = model.id;
+      chat.updatedAt = new Date();
+      await chat.save();
+      res.setHeader(
+        "Access-Control-Expose-Headers",
+        "X-Chat-Id, X-Initial-Prompt"
+      );
+      res.setHeader("X-Chat-Id", chat._id.toString());
+      res.setHeader("X-Initial-Prompt", initialPrompt);
+      res.write(`data: ${fullReply}\n\n`);
+      res.end();
+      return;
+    }
+
     const result = streamText({
-      model: openai("gpt-4o-mini"),
+      model: model.aiModel,
       messages: messagesForModel,
     });
 
@@ -210,6 +267,7 @@ export async function createIdeaChat(req, res, next) {
       { role: "assistant", content: fullReply },
     ];
     chat.systemMessage = systemMessage;
+    chat.modelId = model.id;
     chat.updatedAt = new Date();
     await chat.save();
   } catch (err) {
@@ -276,7 +334,7 @@ export const getUserChats = async (req, res) => {
 
     const chats = await Chat.find({ createdBy: userId })
       .sort({ updatedAt: -1 })
-      .select("_id title graphId ideaId updatedAt history");
+      .select("_id title graphId ideaId updatedAt history modelId");
 
     res.status(200).json({ chats });
   } catch (err) {
@@ -293,9 +351,9 @@ export const getChatsByGraph = async (req, res) => {
     const { graphId } = req.params;
     const userId = req.user.id;
 
-    const chats = await Chat.find({ createdBy: userId, graphId }).sort({
-      updatedAt: -1,
-    });
+    const chats = await Chat.find({ createdBy: userId, graphId })
+      .sort({ updatedAt: -1 })
+      .select("_id title graphId ideaId updatedAt history modelId");
 
     res.status(200).json({ chats });
   } catch (err) {
@@ -360,6 +418,9 @@ export const sendChatMessage = async (req, res) => {
     const chat = await Chat.findOne({ _id: chatId, createdBy: userId });
     if (!chat) return res.status(404).json({ error: "Chat not found" });
 
+    const model = resolveTextModel(chat.modelId);
+    chat.modelId = model.id;
+
     const normalizedHistory = normalizeHistory(
       chat.history,
       chat.title || chat.history?.originalPrompt || ""
@@ -382,23 +443,32 @@ export const sendChatMessage = async (req, res) => {
       content: m.content,
     }));
 
-    // Send to OpenAI
-    const client = getOpenAIClient();
-    const response = await client.responses.create({
-      model: "gpt-4o-mini",
-      input: cleanMessages,
-      text: { format: { type: "text" } },
-      temperature: 0.7,
-    });
-
-    const reply = response.output_text?.trim() || "No response generated.";
+    let reply = "No response generated.";
+    if (model.provider === "google") {
+      const gModel = model.genAI.getGenerativeModel({ model: model.modelName });
+      const promptText = cleanMessages
+        .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
+        .join("\n\n");
+      const response = await gModel.generateContent({
+        contents: [{ role: "user", parts: [{ text: promptText }] }],
+      });
+      reply = response.response?.text() || reply;
+    } else {
+      const result = await streamText({
+        model: model.aiModel,
+        messages: cleanMessages,
+        temperature: 0.7,
+      });
+      reply = (await result.text) || reply;
+    }
 
     // Append assistant reply
     chat.messages.push({ role: "assistant", content: reply });
     chat.systemMessage = systemMessage;
+    chat.modelId = model.id;
     await chat.save();
 
-    res.status(200).json({ reply, chat });
+    res.status(200).json({ reply, chat, modelId: model.id });
   } catch (err) {
     console.error("Error in sendChatMessage:", err);
     res.status(500).json({ error: "Failed to send chat message" });
@@ -413,6 +483,9 @@ export async function sendChatMessageStream(req, res) {
     // 1. Load chat
     const chat = await Chat.findOne({ _id: chatId, createdBy: userId });
     if (!chat) return res.status(404).json({ error: "Chat not found" });
+
+    const model = resolveTextModel(chat.modelId);
+    chat.modelId = model.id;
 
     const normalizedHistory = normalizeHistory(
       chat.history,
@@ -436,8 +509,14 @@ export async function sendChatMessageStream(req, res) {
     ];
 
     // 4. Start Vercel AI streaming
+    if (model.provider === "google") {
+      return res
+        .status(400)
+        .json({ error: "Streaming not supported for this model yet." });
+    }
+
     const result = streamText({
-      model: openai("gpt-4o-mini"),
+      model: model.aiModel,
       messages,
     });
 
@@ -455,6 +534,7 @@ export async function sendChatMessageStream(req, res) {
     chat.messages.push({ role: "assistant", content: fullReply });
     chat.updatedAt = new Date();
     chat.systemMessage = systemMessage;
+    chat.modelId = model.id;
     await chat.save();
   } catch (err) {
     console.error("STREAM ERROR:", err);

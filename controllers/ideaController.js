@@ -1,7 +1,12 @@
 import { IdeaGraph } from "../models/ideaGraph.js";
 import { getOpenAIClient } from "../utils/openaiClient.js";
-import { storageAvailable, uploadIdeaImage } from "../services/storageService.js";
+import {
+  storageAvailable,
+  uploadIdeaImage,
+} from "../services/storageService.js";
 import crypto from "crypto";
+import { resolveTextModel } from "../services/modelRouter.js";
+import { streamText } from "ai";
 
 const IMAGE_PRESETS = {
   // Map to provider-supported size/quality values
@@ -85,6 +90,35 @@ const getLineageTitles = (history) => {
     ...normalized.ancestors.map((a) => a.title),
   ].filter(Boolean);
 };
+
+// Extract JSON from common model-wrapping formats (e.g., ```json ... ``` or prose + block)
+function extractJsonPayload(text) {
+  if (!text || typeof text !== "string") return text;
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) return fenced[1].trim();
+  return text.trim();
+}
+
+// Parse model output that might contain leading/trailing prose.
+function parseIdeasJson(text) {
+  if (!text || typeof text !== "string") return null;
+  const candidates = [];
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) candidates.push(fenced[1]);
+  candidates.push(text.trim());
+  // Try to extract the first JSON object substring as a last resort
+  const objMatch = text.match(/{[\s\S]*}/);
+  if (objMatch?.[0]) candidates.push(objMatch[0]);
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // continue
+    }
+  }
+  return null;
+}
 
 function coerceIdeasShape(raw, history) {
   const lineage = getLineageTitles(history);
@@ -183,7 +217,7 @@ async function persistGeneratedImage({ imageData, userId, ideaTitle }) {
 export async function generateMainIdeas(req, res, next) {
   try {
     if (!validateRequired(req.body, "prompt", res)) return;
-    const { prompt } = req.body;
+    const { prompt, modelId: requestedModelId } = req.body;
     const context =
       typeof req.body?.context === "string" ? req.body.context.trim() : "";
     const userId = req.user?.id;
@@ -193,7 +227,7 @@ export async function generateMainIdeas(req, res, next) {
       return res.status(401).json({ error: "User not authenticated !!!" });
     }
 
-    const client = getOpenAIClient();
+    const model = resolveTextModel(requestedModelId);
 
     const system = [
       "You are Myceli, an expert ideation assistant for a visual mind-map app.",
@@ -214,22 +248,32 @@ export async function generateMainIdeas(req, res, next) {
 
     const user = userParts.join("\n\n");
 
-    const response = await client.responses.create({
-      model: "gpt-4o-mini",
-      input: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      text: { format: { type: "json_object" } },
-      temperature: 0.7,
-    });
+    let jsonText = "{}";
+    if (model.provider === "google") {
+      const gModel = model.genAI.getGenerativeModel({ model: model.modelName });
+      const promptText = `${system}\n\n${user}`;
+      const response = await gModel.generateContent({
+        contents: [{ role: "user", parts: [{ text: promptText }] }],
+      });
+      jsonText = response.response?.text() || "{}";
+    } else {
+      const result = await streamText({
+        model: model.aiModel,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+        temperature: 0.7,
+      });
+      jsonText = (await result.text) || "{}";
+    }
+    // Debug: capture raw model text for troubleshooting malformed payloads
+    console.debug("[generateMainIdeas] raw model text:", jsonText);
 
-    const jsonText = response.output_text || "{}";
-    let raw;
-    try {
-      raw = JSON.parse(jsonText);
-    } catch {
-      raw = { ideas: [] };
+    const raw = parseIdeasJson(jsonText);
+    if (!raw) {
+      console.error("❌ Unable to parse model output (main ideas):", jsonText);
+      return res.status(502).json({ error: "Model returned unreadable JSON" });
     }
 
     const baseHistory = normalizeHistory(
@@ -238,7 +282,7 @@ export async function generateMainIdeas(req, res, next) {
         originalContext: context,
         ancestors: [],
       },
-      prompt
+      prompt,
     );
 
     // 🧠 Generate deterministic IDs using the root prompt as ancestry
@@ -252,31 +296,18 @@ export async function generateMainIdeas(req, res, next) {
       }),
     }));
 
-    // Enforce 4–6 ideas if model under/over-produces
-    if (ideas.length < 4 || ideas.length > 6) {
+    // Enforce 4–6 ideas; fail fast if the model under-produces
+    if (ideas.length < 4) {
+      console.error("Model returned insufficient ideas (main):", {
+        raw,
+        ideas,
+      });
+      return res
+        .status(502)
+        .json({ error: "Model returned insufficient ideas" });
+    }
+    if (ideas.length > 6) {
       ideas = ideas.slice(0, 6);
-      while (ideas.length < 4) {
-        const fallbackId = createId();
-        const fallbackIdea = {
-          id: fallbackId,
-          nodeId: fallbackId,
-          label: "Idea",
-          summary: "",
-          details: [],
-          followUps: [
-            "Explain this idea in simple terms.",
-            "Why is this idea important?",
-            "What are the main challenges with this idea?",
-          ],
-        };
-        fallbackIdea.history = appendHistory(baseHistory, {
-          kind: "idea",
-          title: fallbackIdea.label,
-          summary: fallbackIdea.summary,
-          nodeId: fallbackId,
-        });
-        ideas.push(fallbackIdea);
-      }
     }
 
     // Ensure each idea has at least 4 sub-ideas, but keep followUps as-is
@@ -294,16 +325,16 @@ export async function generateMainIdeas(req, res, next) {
                   const subId = makeIdeaId(
                     `Sub-${j}`,
                     getLineageTitles(idea.history || baseHistory).concat(
-                      idea.label
-                    )
+                      idea.label,
+                    ),
                   );
                   return {
                     id: subId,
                     nodeId: subId,
                     label: "Sub-idea",
                   };
-                }
-              )
+                },
+              ),
             );
 
       // Ensure followUps is always an array
@@ -328,10 +359,14 @@ export async function generateMainIdeas(req, res, next) {
         i.label &&
         i.summary &&
         Array.isArray(i.details) &&
-        Array.isArray(i.followUps)
+        Array.isArray(i.followUps),
     );
 
     if (!valid) {
+      console.error("Invalid model response format (main ideas):", {
+        raw,
+        ideas,
+      });
       return res.status(502).json({ error: "Invalid model response format" });
     }
 
@@ -341,6 +376,11 @@ export async function generateMainIdeas(req, res, next) {
       title: prompt,
       nodes: [],
       edges: [],
+      meta: {
+        originalPrompt: prompt,
+        originalContext: context,
+        lastUsedModelId: model.id,
+      },
     });
 
     // 🧩 Return ideas + graph metadata (now with followUps)
@@ -348,6 +388,7 @@ export async function generateMainIdeas(req, res, next) {
       graphId: graph._id,
       title: graph.title,
       ideas,
+      modelId: model.id,
     });
   } catch (err) {
     return next(err);
@@ -361,7 +402,12 @@ export async function generateMainIdeas(req, res, next) {
 export async function expandIdea(req, res, next) {
   try {
     console.log("=== expandIdea called ===");
-    const { ideaTitle, history: rawHistory, prompt } = req.body;
+    const {
+      ideaTitle,
+      history: rawHistory,
+      prompt,
+      modelId: requestedModelId,
+    } = req.body;
     const rawMode = typeof req.body?.mode === "string" ? req.body.mode : "";
     const mode = rawMode === "ask" ? "ask" : "expand";
 
@@ -431,11 +477,11 @@ export async function expandIdea(req, res, next) {
 
       return modeConfig.fallbackFollowUps.slice(
         0,
-        Math.max(modeConfig.followUpsMin, modeConfig.followUpsMax)
+        Math.max(modeConfig.followUpsMin, modeConfig.followUpsMax),
       );
     };
 
-    const client = getOpenAIClient();
+    const model = resolveTextModel(requestedModelId);
 
     // --- History + context preparation ---
     const historyWithPrompt =
@@ -493,27 +539,29 @@ export async function expandIdea(req, res, next) {
       mode,
     });
 
-    const response = await client.responses.create({
-      model: "gpt-4o-mini",
-      input: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      text: { format: { type: "json_object" } },
-      temperature: 0.7,
-    });
-
-    const jsonText = response.output_text || "{}";
-    let raw;
-    try {
-      raw = JSON.parse(jsonText);
-    } catch (parseErr) {
-      console.error(
-        "❌ Failed to parse model output JSON:",
-        jsonText,
-        parseErr
-      );
-      raw = { ideas: [] };
+    let jsonText = "{}";
+    if (model.provider === "google") {
+      const gModel = model.genAI.getGenerativeModel({ model: model.modelName });
+      const promptText = `${systemPrompt}\n\n${userPrompt}`;
+      const response = await gModel.generateContent({
+        contents: [{ role: "user", parts: [{ text: promptText }] }],
+      });
+      jsonText = response.response?.text() || "{}";
+    } else {
+      const result = await streamText({
+        model: model.aiModel,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.7,
+      });
+      jsonText = (await result.text) || "{}";
+    }
+    const raw = parseIdeasJson(jsonText);
+    if (!raw) {
+      console.error("❌ Unable to parse model output (expand idea):", jsonText);
+      return res.status(502).json({ error: "Model returned unreadable JSON" });
     }
 
     // --- Normalize and shape ideas (reusing the same logic) ---
@@ -534,33 +582,18 @@ export async function expandIdea(req, res, next) {
       };
     });
 
-    // --- Enforce per-mode idea counts ---
-    if (
-      ideas.length < modeConfig.minIdeas ||
-      ideas.length > modeConfig.maxIdeas
-    ) {
+    // --- Enforce per-mode idea counts (fail fast instead of padding) ---
+    if (ideas.length < modeConfig.minIdeas) {
+      console.error("Model returned insufficient ideas (expand):", {
+        raw,
+        ideas,
+      });
+      return res
+        .status(502)
+        .json({ error: "Model returned insufficient ideas" });
+    }
+    if (ideas.length > modeConfig.maxIdeas) {
       ideas = ideas.slice(0, modeConfig.maxIdeas);
-      while (ideas.length < modeConfig.minIdeas) {
-        const fallbackId = makeIdeaId(
-          `Fallback-${ideas.length}`,
-          getLineageTitles(historyWithPrompt)
-        );
-        const fallbackIdea = {
-          id: fallbackId,
-          nodeId: fallbackId,
-          label: modeConfig.fallbackLabel,
-          summary: modeConfig.fallbackSummary,
-          details: [],
-          followUps: ensureFollowUps(modeConfig.fallbackFollowUps),
-        };
-        fallbackIdea.history = appendHistory(historyWithPrompt, {
-          kind: "idea",
-          title: fallbackIdea.label,
-          summary: fallbackIdea.summary,
-          nodeId: fallbackId,
-        });
-        ideas.push(fallbackIdea);
-      }
     }
 
     const valid = ideas.every(
@@ -569,16 +602,19 @@ export async function expandIdea(req, res, next) {
         i.label &&
         i.summary &&
         Array.isArray(i.details) &&
-        Array.isArray(i.followUps)
+        Array.isArray(i.followUps),
     );
 
     if (!valid) {
-      console.error("Invalid model response format:", ideas);
+      console.error("Invalid model response format (expandIdea):", {
+        raw,
+        ideas,
+      });
       return res.status(502).json({ error: "Invalid model response format" });
     }
 
     // ✅ Return same consistent shape as generateMainIdeas
-    return res.json({ ideas });
+    return res.json({ ideas, modelId: model.id });
   } catch (err) {
     console.error("Unexpected error in expandIdea:", err);
     return next(err);
@@ -613,7 +649,7 @@ export async function generateIdeaImage(req, res, next) {
     const imageSettings = resolveImageSettings(generationPreset);
     const incomingHistory = normalizeHistory(
       typeof req.body?.history === "object" ? req.body.history : {},
-      ideaTitle
+      ideaTitle,
     );
 
     if (!ideaTitle) {
@@ -710,7 +746,9 @@ export async function regenerateIdeaImage(req, res, next) {
     const imageUrl =
       typeof req.body?.imageUrl === "string" ? req.body.imageUrl.trim() : "";
     const promptUsed =
-      typeof req.body?.promptUsed === "string" ? req.body.promptUsed.trim() : "";
+      typeof req.body?.promptUsed === "string"
+        ? req.body.promptUsed.trim()
+        : "";
     const generationPreset =
       typeof req.body?.generationPreset === "string"
         ? req.body.generationPreset
@@ -718,7 +756,7 @@ export async function regenerateIdeaImage(req, res, next) {
     const imageSettings = resolveImageSettings(generationPreset);
     const incomingHistory = normalizeHistory(
       typeof req.body?.history === "object" ? req.body.history : {},
-      ideaTitle
+      ideaTitle,
     );
 
     if (!ideaTitle) {

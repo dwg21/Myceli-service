@@ -71,6 +71,10 @@ const chatSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+    modelId: {
+      type: String,
+      default: "openai/gpt-4.1-mini",
+    },
   },
   { timestamps: true }
 );

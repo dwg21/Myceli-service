@@ -40,6 +40,17 @@ export const saveGraph = async (req, res) => {
       (meta && meta.originalPrompt) || graph.meta?.originalPrompt || "";
     const metaContext =
       (meta && meta.originalContext) || graph.meta?.originalContext || "";
+    const metaModelId =
+      (meta && typeof meta.modelId === "string" && meta.modelId.trim()) ||
+      graph.meta?.modelId ||
+      "";
+    const metaLastUsedModelId =
+      (meta &&
+        typeof meta.lastUsedModelId === "string" &&
+        meta.lastUsedModelId.trim()) ||
+      graph.meta?.lastUsedModelId ||
+      metaModelId ||
+      "";
 
     const cleanNodes = Array.isArray(nodes)
       ? nodes.map((n) => {
@@ -110,9 +121,10 @@ export const saveGraph = async (req, res) => {
     // store shared meta (original prompt/context)
     if (meta && typeof meta === "object") {
       graph.meta = {
-        originalPrompt: meta.originalPrompt || graph.meta?.originalPrompt || "",
-        originalContext:
-          meta.originalContext || graph.meta?.originalContext || "",
+        originalPrompt: metaPrompt,
+        originalContext: metaContext,
+        modelId: metaModelId,
+        lastUsedModelId: metaLastUsedModelId,
       };
     }
     graph.updatedAt = new Date();
@@ -165,6 +177,10 @@ export const getGraphById = async (req, res) => {
     console.log("searching grpahs with", id, userId);
     const graph = await IdeaGraph.findOne({ _id: id, user: userId });
     if (!graph) return res.status(404).json({ error: "Graph not found" });
+    // Ensure lastUsedModelId is populated for older graphs
+    if (!graph.meta?.lastUsedModelId && graph.meta?.modelId) {
+      graph.meta.lastUsedModelId = graph.meta.modelId;
+    }
     res.status(200).json(graph);
   } catch (err) {
     res.status(500).json({ error: "Failed to load graph" });

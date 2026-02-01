@@ -61,6 +61,8 @@ const ideaGraphSchema = new mongoose.Schema(
     meta: {
       originalPrompt: { type: String, default: "" },
       originalContext: { type: String, default: "" },
+      // Source of truth: the most recently used model for this graph
+      lastUsedModelId: { type: String, default: "" },
     },
     nodes: [ideaSchema],
     edges: [edgeSchema],

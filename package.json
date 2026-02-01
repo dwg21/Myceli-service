@@ -9,8 +9,11 @@
     "dev": "nodemon index.js"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^2.0.17",
     "@ai-sdk/openai": "^2.0.69",
+    "@anthropic-ai/sdk": "^0.72.1",
     "@aws-sdk/client-s3": "^3.744.0",
+    "@google/generative-ai": "^0.11.5",
     "ai": "^5.0.98",
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
