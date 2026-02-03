@@ -2,6 +2,7 @@
 import express from "express";
 import {
   createIdeaChat,
+  createStandaloneChat,
   saveChat,
   getUserChats,
   getChatsByGraph,
@@ -19,6 +20,7 @@ router.use(requireAuth);
 
 router.post("/save", saveChat);
 router.post("/create", createIdeaChat);
+router.post("/create-standalone", createStandaloneChat);
 router.get("/", getUserChats);
 router.get("/graph/:graphId", getChatsByGraph);
 router.get("/:id", getChatById);

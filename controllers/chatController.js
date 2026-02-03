@@ -68,6 +68,54 @@ const buildSystemMessage = (ideaTitle, history) => {
 };
 
 /**
+ * Starts a standalone chat (no graph / idea linkage).
+ */
+export async function createStandaloneChat(req, res, next) {
+  try {
+    const { title, history: rawHistory, modelId: requestedModelId } = req.body;
+    const userId = req.user.id;
+    const model = resolveTextModel(requestedModelId);
+
+    if (!title?.trim()) {
+      return res.status(400).json({ error: "Missing required field: title" });
+    }
+
+    const history = normalizeHistory(
+      rawHistory || { originalPrompt: title },
+      title,
+    );
+    if (!history.originalPrompt) {
+      history.originalPrompt = title;
+    }
+
+    const systemMessage = buildSystemMessage(title, history);
+
+    const chat = await Chat.create({
+      createdBy: userId,
+      graphId: null,
+      ideaId: null,
+      title,
+      history,
+      systemMessage,
+      messages: [],
+      modelId: model.id,
+    });
+
+    res.setHeader(
+      "Access-Control-Expose-Headers",
+      "X-Chat-Id, X-Initial-Prompt",
+    );
+    res.setHeader("X-Chat-Id", chat._id.toString());
+    res.setHeader("X-Initial-Prompt", "");
+
+    return res.status(200).json({ chat });
+  } catch (err) {
+    console.error("Error creating standalone chat:", err);
+    return next(err);
+  }
+}
+
+/**
  * Starts a new reflection chat for a specific idea.
  * Builds context from ancestors, generates system message, and automatically
  * asks the model to "explain this idea" to provide an initial thoughtful response.
