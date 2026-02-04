@@ -172,7 +172,7 @@ export async function createIdeaChat(req, res, next) {
       // Ensure the graph node is tagged with the chatId (idempotent)
       await IdeaGraph.updateOne(
         { _id: graphId, user: userId, "nodes.id": ideaId },
-        { $set: { "nodes.$.chatId": existingChat._id } }
+        { $set: { "nodes.$.chatId": existingChat._id } },
       );
 
       return res.status(200).json({
@@ -198,7 +198,7 @@ export async function createIdeaChat(req, res, next) {
     // --- Attach chatId to the graph node ---
     await IdeaGraph.updateOne(
       { _id: graphId, user: userId, "nodes.id": ideaId },
-      { $set: { "nodes.$.chatId": chat._id } }
+      { $set: { "nodes.$.chatId": chat._id } },
     );
 
     if (!wantsStream) {
@@ -209,10 +209,7 @@ export async function createIdeaChat(req, res, next) {
           const gModel = model.genAI.getGenerativeModel({
             model: model.modelName,
           });
-          const promptText = [
-            systemMessage.content,
-            `User: ${initialPrompt}`,
-          ]
+          const promptText = [systemMessage.content, `User: ${initialPrompt}`]
             .filter(Boolean)
             .join("\n\n");
           const response = await gModel.generateContent({
@@ -241,7 +238,7 @@ export async function createIdeaChat(req, res, next) {
 
       res.setHeader(
         "Access-Control-Expose-Headers",
-        "X-Chat-Id, X-Initial-Prompt"
+        "X-Chat-Id, X-Initial-Prompt",
       );
       res.setHeader("X-Chat-Id", chat._id.toString());
       res.setHeader("X-Initial-Prompt", initialPrompt);
@@ -260,7 +257,7 @@ export async function createIdeaChat(req, res, next) {
     res.setHeader("Connection", "keep-alive");
     res.setHeader(
       "Access-Control-Expose-Headers",
-      "X-Chat-Id, X-Initial-Prompt"
+      "X-Chat-Id, X-Initial-Prompt",
     );
     res.setHeader("X-Chat-Id", chat._id.toString());
     res.setHeader("X-Initial-Prompt", initialPrompt);
@@ -277,10 +274,26 @@ export async function createIdeaChat(req, res, next) {
       const promptText = messagesForModel
         .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
         .join("\n\n");
-      const response = await gModel.generateContent({
+
+      // Stream tokens from Gemini (async iterator) and forward to client
+      const streamingResp = await gModel.generateContentStream({
         contents: [{ role: "user", parts: [{ text: promptText }] }],
       });
-      const fullReply = response.response?.text() || "";
+
+      let fullReply = "";
+      try {
+        for await (const chunk of streamingResp.stream) {
+          const text = chunk.text();
+          if (!text) continue;
+          fullReply += text;
+          res.write(text);
+        }
+      } catch (err) {
+        console.error("❌ Gemini streaming error (initial chat):", err);
+        res.write("Streaming error. Please retry.");
+      } finally {
+        res.end();
+      }
 
       chat.messages = [
         { role: "user", content: initialPrompt },
@@ -290,14 +303,6 @@ export async function createIdeaChat(req, res, next) {
       chat.modelId = model.id;
       chat.updatedAt = new Date();
       await chat.save();
-      res.setHeader(
-        "Access-Control-Expose-Headers",
-        "X-Chat-Id, X-Initial-Prompt"
-      );
-      res.setHeader("X-Chat-Id", chat._id.toString());
-      res.setHeader("X-Initial-Prompt", initialPrompt);
-      res.write(`data: ${fullReply}\n\n`);
-      res.end();
       return;
     }
 
@@ -354,13 +359,13 @@ export const saveChat = async (req, res) => {
     if (rawHistory) {
       chat.history = normalizeHistory(
         rawHistory,
-        chat.history?.originalPrompt || chat.title
+        chat.history?.originalPrompt || chat.title,
       );
     }
 
     chat.systemMessage = buildSystemMessage(
       chat.title || chat.history?.originalPrompt || "",
-      chat.history
+      chat.history,
     );
 
     chat.updatedAt = new Date();
@@ -471,12 +476,12 @@ export const sendChatMessage = async (req, res) => {
 
     const normalizedHistory = normalizeHistory(
       chat.history,
-      chat.title || chat.history?.originalPrompt || ""
+      chat.title || chat.history?.originalPrompt || "",
     );
     chat.history = normalizedHistory;
     const systemMessage = buildSystemMessage(
       chat.title || normalizedHistory.originalPrompt,
-      normalizedHistory
+      normalizedHistory,
     );
 
     // Append user message
@@ -537,12 +542,12 @@ export async function sendChatMessageStream(req, res) {
 
     const normalizedHistory = normalizeHistory(
       chat.history,
-      chat.title || chat.history?.originalPrompt || ""
+      chat.title || chat.history?.originalPrompt || "",
     );
     chat.history = normalizedHistory;
     const systemMessage = buildSystemMessage(
       chat.title || normalizedHistory.originalPrompt,
-      normalizedHistory
+      normalizedHistory,
     );
 
     // 2. Save the user message
@@ -556,22 +561,48 @@ export async function sendChatMessageStream(req, res) {
       ...chat.messages.map((m) => ({ role: m.role, content: m.content })),
     ];
 
-    // 4. Start Vercel AI streaming
+    // 4. Start streaming
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
     if (model.provider === "google") {
-      return res
-        .status(400)
-        .json({ error: "Streaming not supported for this model yet." });
+      const gModel = model.genAI.getGenerativeModel({ model: model.modelName });
+      const promptText = messages
+        .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
+        .join("\n\n");
+
+      const streamingResp = await gModel.generateContentStream({
+        contents: [{ role: "user", parts: [{ text: promptText }] }],
+      });
+
+      let fullReply = "";
+      try {
+        for await (const chunk of streamingResp.stream) {
+          const text = chunk.text();
+          if (!text) continue;
+          fullReply += text;
+          res.write(text);
+        }
+      } catch (err) {
+        console.error("STREAM ERROR (Gemini):", err);
+        res.write("Streaming error. Please retry.");
+      } finally {
+        res.end();
+      }
+
+      chat.messages.push({ role: "assistant", content: fullReply });
+      chat.updatedAt = new Date();
+      chat.systemMessage = systemMessage;
+      chat.modelId = model.id;
+      await chat.save();
+      return;
     }
 
     const result = streamText({
       model: model.aiModel,
       messages,
     });
-
-    // IMPORTANT: set SSE headers manually
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
 
     // 5. Pipe streaming chunks into SSE response (frontend expects this format)
     await result.pipeTextStreamToResponse(res);
