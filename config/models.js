@@ -4,10 +4,10 @@ export const MODEL_CATALOG = {
     provider: "openai",
     type: "text",
     capabilities: ["chat", "graph"],
-    // Costs are informational (credits per 1K tokens); real billing lives in Stripe.
+    // Prices are USD per 1K tokens.
     unitCost: {
-      inputPer1k: 0.0000004,
-      outputPer1k: 0.0000016,
+      inputPer1k: 0.0004,
+      outputPer1k: 0.0016,
     },
     displayName: "GPT-4.1 Mini",
     default: true,
@@ -18,34 +18,32 @@ export const MODEL_CATALOG = {
     type: "text",
     capabilities: ["chat", "graph"],
     unitCost: {
-      inputPer1k: 0.0000001, // $0.10 / 1M input
-      outputPer1k: 0.0000004, // $0.40 / 1M output
+      inputPer1k: 0.0001,
+      outputPer1k: 0.0004,
     },
     displayName: "GPT-4.1 Nano",
     default: false,
   },
   "anthropic/claude-4.5-haiku": {
-    // Anthropic's current alias for Haiku 4.5 (API id: claude-haiku-4-5-20251001)
     id: "anthropic/claude-haiku-4-5",
     provider: "anthropic",
     type: "text",
     capabilities: ["chat", "graph"],
     unitCost: {
-      inputPer1k: 0.000001, // $1 / 1M input
-      outputPer1k: 0.000005, // $5 / 1M output
+      inputPer1k: 0.001,
+      outputPer1k: 0.005,
     },
     displayName: "Claude 4.5 Haiku",
     default: false,
   },
   "anthropic/claude-4.5-sonnet": {
-    // Anthropic's current alias for Sonnet 4.5 (API id: claude-sonnet-4-5-20250929)
     id: "anthropic/claude-sonnet-4-5",
     provider: "anthropic",
     type: "text",
     capabilities: ["chat", "graph"],
     unitCost: {
-      inputPer1k: 0.000003, // $3 / 1M input
-      outputPer1k: 0.000015, // $15 / 1M output
+      inputPer1k: 0.003,
+      outputPer1k: 0.015,
     },
     displayName: "Claude 4.5 Sonnet",
     default: false,
@@ -56,8 +54,8 @@ export const MODEL_CATALOG = {
     type: "text",
     capabilities: ["chat", "graph"],
     unitCost: {
-      inputPer1k: 0.0000005, // placeholder costs; adjust when pricing finalized
-      outputPer1k: 0.000003,
+      inputPer1k: 0.0003,
+      outputPer1k: 0.0025,
     },
     displayName: "Gemini 2.5 Flash",
     default: false,
@@ -68,47 +66,42 @@ export const MODEL_CATALOG = {
     type: "text",
     capabilities: ["chat", "graph"],
     unitCost: {
-      inputPer1k: 0.00000125,
-      outputPer1k: 0.00001,
+      // Gemini 2.5 Pro standard tier for prompts <= 200k tokens.
+      inputPer1k: 0.000625,
+      outputPer1k: 0.005,
     },
     displayName: "Gemini 2.5 Pro",
     default: false,
   },
-  // ----------------------- IMAGE MODELS -------------------------------------
   "openai/gpt-image-1": {
     id: "openai/gpt-image-1",
     provider: "openai",
     type: "image",
     capabilities: ["image"],
-    unitCost: {
-      inputPer1k: 0.000004, // placeholder
-      outputPer1k: 0.000016,
+    // Approx output pricing for square generations (low/medium/high).
+    perImageUsdByQuality: {
+      low: 0.01,
+      medium: 0.04,
+      high: 0.17,
     },
     displayName: "DALL·E (OpenAI)",
     default: false,
   },
-  // ----------------------- IMAGE MODELS (Google Imagen) ----------------------
   "google/imagen-4.0-generate-001": {
     id: "google/imagen-4.0-generate-001",
     provider: "google",
     type: "image",
     capabilities: ["image"],
-    unitCost: {
-      inputPer1k: 0.000002, // placeholder; adjust when pricing is finalized
-      outputPer1k: 0.000012,
-    },
+    perImageUsd: 0.04,
     displayName: "Imagen 4",
-    default: true, // balanced/standard default
+    default: true,
   },
   "google/imagen-4.0-fast-generate-001": {
     id: "google/imagen-4.0-fast-generate-001",
     provider: "google",
     type: "image",
     capabilities: ["image"],
-    unitCost: {
-      inputPer1k: 0.0000012,
-      outputPer1k: 0.000006,
-    },
+    perImageUsd: 0.02,
     displayName: "Imagen 4 Fast",
     default: false,
   },
@@ -117,10 +110,7 @@ export const MODEL_CATALOG = {
     provider: "google",
     type: "image",
     capabilities: ["image"],
-    unitCost: {
-      inputPer1k: 0.000004,
-      outputPer1k: 0.00002,
-    },
+    perImageUsd: 0.06,
     displayName: "Imagen 4 Ultra",
     default: false,
   },

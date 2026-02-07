@@ -43,15 +43,15 @@ const getPlanForPrice = (priceId) => PRICE_TO_PLAN[priceId];
 
 const TOPUP_PACKS = {
   "credits-small": {
-    credits: 400, // ~$5
+    credits: 250, // ~$2.50 worth of model credits at 100 credits = $1
     price: env.stripeTopupSmall,
   },
   "credits-medium": {
-    credits: 900, // ~$10
+    credits: 500, // ~$5 worth of model credits at 100 credits = $1
     price: env.stripeTopupMedium,
   },
   "credits-large": {
-    credits: 2000, // ~$20
+    credits: 1000, // ~$10 worth of model credits at 100 credits = $1
     price: env.stripeTopupLarge,
   },
 };
@@ -88,10 +88,13 @@ const syncSubscriptionToUser = async (subscription, hintedUserId) => {
 
   const pendingUpdate = subscription.pending_update;
   const pendingPriceId = pendingUpdate?.items?.data?.[0]?.price?.id;
-  const pendingPlanInfo = pendingPriceId ? getPlanForPrice(pendingPriceId) : null;
+  const pendingPlanInfo = pendingPriceId
+    ? getPlanForPrice(pendingPriceId)
+    : null;
   const pendingPlan =
     pendingPlanInfo?.plan ||
-    (pendingUpdate?.metadata?.plan === "basic" || pendingUpdate?.metadata?.plan === "pro"
+    (pendingUpdate?.metadata?.plan === "basic" ||
+    pendingUpdate?.metadata?.plan === "pro"
       ? pendingUpdate.metadata.plan
       : null);
   const pendingEffectiveTs =
@@ -165,7 +168,9 @@ const syncSubscriptionToUser = async (subscription, hintedUserId) => {
 
   user.planChangeTo = pendingPlanTo || undefined;
   user.planChangeEffectiveAt = pendingPlanEffectiveAt || undefined;
-  user.planRenewalAt = user.planRenewalAt || (Number.isFinite(periodEndTs) ? new Date(periodEndTs * 1000) : undefined);
+  user.planRenewalAt =
+    user.planRenewalAt ||
+    (Number.isFinite(periodEndTs) ? new Date(periodEndTs * 1000) : undefined);
 
   await user.save();
 
@@ -406,7 +411,10 @@ export const handleStripeWebhook = async (req, res) => {
             session.metadata?.userId || subscription.metadata?.userId,
           );
         }
-        if (session.mode === "payment" && session.metadata?.source === "topup") {
+        if (
+          session.mode === "payment" &&
+          session.metadata?.source === "topup"
+        ) {
           const userId = session.metadata.userId;
           const packCredits = Number(session.metadata.packCredits || 0);
           if (userId && packCredits > 0) {
@@ -422,7 +430,10 @@ export const handleStripeWebhook = async (req, res) => {
               console.warn("[billing] top-up user not found", userId);
             }
           } else {
-            console.warn("[billing] top-up session missing metadata", session.id);
+            console.warn(
+              "[billing] top-up session missing metadata",
+              session.id,
+            );
           }
         }
         break;
