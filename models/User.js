@@ -20,6 +20,8 @@ const userSchema = new mongoose.Schema({
   },
   creditsUsed: { type: Number, default: 0 },
   creditsBonus: { type: Number, default: 0 },
+  graphsStartedThisPeriod: { type: Number, default: 0 },
+  chatsStartedThisPeriod: { type: Number, default: 0 },
   periodStart: { type: Date, default: () => new Date() },
   periodEnd: {
     type: Date,

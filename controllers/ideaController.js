@@ -7,6 +7,7 @@ import {
 import crypto from "crypto";
 import { resolveTextModel, resolveImageModel } from "../services/modelRouter.js";
 import { streamText } from "ai";
+import { incrementUsageCounter } from "../middleware/usageLimits.js";
 
 const IMAGE_PRESETS = {
   // Map to provider-supported size/quality values
@@ -384,6 +385,11 @@ export async function generateMainIdeas(req, res, next) {
     });
 
     // 🧩 Return ideas + graph metadata (now with followUps)
+    if (req.limitUser) {
+      incrementUsageCounter(req.limitUser, "graphCreate");
+      await req.limitUser.save();
+    }
+
     return res.status(200).json({
       graphId: graph._id,
       title: graph.title,

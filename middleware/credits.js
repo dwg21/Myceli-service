@@ -111,6 +111,8 @@ export const requireCredits = (actionKey) => {
         user.periodEnd = getNextPeriodEnd(now);
         user.creditsTotal = getPlanCredits(user.plan);
         user.creditsUsed = 0;
+        user.graphsStartedThisPeriod = 0;
+        user.chatsStartedThisPeriod = 0;
       }
 
       const creditsAllowance = (user.creditsTotal || 0) + (user.creditsBonus || 0);

@@ -87,6 +87,8 @@ export const signup = async (req, res) => {
         creditsTotal: user.creditsTotal,
         creditsUsed: user.creditsUsed,
         periodEnd: user.periodEnd,
+        graphsStartedThisPeriod: user.graphsStartedThisPeriod,
+        chatsStartedThisPeriod: user.chatsStartedThisPeriod,
       },
     });
   } catch (err) {
@@ -124,6 +126,8 @@ export const login = async (req, res) => {
         creditsTotal: user.creditsTotal,
         creditsUsed: user.creditsUsed,
         periodEnd: user.periodEnd,
+        graphsStartedThisPeriod: user.graphsStartedThisPeriod,
+        chatsStartedThisPeriod: user.chatsStartedThisPeriod,
       },
     });
   } catch (err) {
@@ -172,7 +176,7 @@ export const me = async (req, res) => {
 
   try {
     const user = await User.findById(req.user.id).select(
-      "name email role plan planInterval planChangeTo planChangeEffectiveAt planRenewalAt creditsTotal creditsUsed creditsBonus periodEnd marketingOptIn acceptedTermsAt termsVersion",
+      "name email role plan planInterval planChangeTo planChangeEffectiveAt planRenewalAt creditsTotal creditsUsed creditsBonus periodEnd marketingOptIn acceptedTermsAt termsVersion graphsStartedThisPeriod chatsStartedThisPeriod",
     );
     if (!user) return res.status(404).json({ error: "User not found" });
 
@@ -194,6 +198,8 @@ export const me = async (req, res) => {
         creditsTotal: user.creditsTotal,
         creditsUsed: user.creditsUsed,
         periodEnd: user.periodEnd,
+        graphsStartedThisPeriod: user.graphsStartedThisPeriod,
+        chatsStartedThisPeriod: user.chatsStartedThisPeriod,
       },
     });
   } catch (err) {

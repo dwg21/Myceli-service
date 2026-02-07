@@ -13,14 +13,19 @@ import {
 } from "../controllers/chatController.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireCredits } from "../middleware/credits.js";
+import { requireFreeLimit } from "../middleware/usageLimits.js";
 
 const router = express.Router();
 
 router.use(requireAuth);
 
 router.post("/save", saveChat);
-router.post("/create", createIdeaChat);
-router.post("/create-standalone", createStandaloneChat);
+router.post("/create", requireFreeLimit("chatCreate"), createIdeaChat);
+router.post(
+  "/create-standalone",
+  requireFreeLimit("chatCreate"),
+  createStandaloneChat
+);
 router.get("/", getUserChats);
 router.get("/graph/:graphId", getChatsByGraph);
 router.get("/:id", getChatById);

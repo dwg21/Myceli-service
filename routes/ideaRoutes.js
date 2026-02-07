@@ -8,6 +8,7 @@ import {
 import { requireAuth } from "../middleware/auth.js";
 import { requireCredits } from "../middleware/credits.js";
 import { requirePlan } from "../middleware/plan.js";
+import { requireFreeLimit } from "../middleware/usageLimits.js";
 
 const router = Router();
 
@@ -15,6 +16,7 @@ const router = Router();
 router.post(
   "/generate-main-ideas",
   requireAuth,
+   requireFreeLimit("graphCreate"),
   requireCredits("generateMainIdeas"),
   generateMainIdeas
 );

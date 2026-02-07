@@ -2,6 +2,7 @@ import { Chat } from "../models/Chat.js";
 import { IdeaGraph } from "../models/ideaGraph.js";
 import { streamText } from "ai";
 import { resolveTextModel } from "../services/modelRouter.js";
+import { incrementUsageCounter } from "../middleware/usageLimits.js";
 
 const normalizeHistory = (history, fallbackPrompt = "") => {
   const originalPrompt =
@@ -101,6 +102,11 @@ export async function createStandaloneChat(req, res, next) {
       modelId: model.id,
     });
 
+    if (req.limitUser) {
+      incrementUsageCounter(req.limitUser, "chatCreate");
+      await req.limitUser.save();
+    }
+
     res.setHeader(
       "Access-Control-Expose-Headers",
       "X-Chat-Id, X-Initial-Prompt",
@@ -194,6 +200,11 @@ export async function createIdeaChat(req, res, next) {
       messages: [],
       modelId: model.id,
     });
+
+    if (req.limitUser) {
+      incrementUsageCounter(req.limitUser, "chatCreate");
+      await req.limitUser.save();
+    }
 
     // --- Attach chatId to the graph node ---
     await IdeaGraph.updateOne(
