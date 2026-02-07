@@ -43,15 +43,15 @@ const getPlanForPrice = (priceId) => PRICE_TO_PLAN[priceId];
 
 const TOPUP_PACKS = {
   "credits-small": {
-    credits: 250, // ~$2.50 worth of model credits at 100 credits = $1
+    credits: 2500, // ~$2.50 worth of model credits at 1000 credits = $1
     price: env.stripeTopupSmall,
   },
   "credits-medium": {
-    credits: 500, // ~$5 worth of model credits at 100 credits = $1
+    credits: 5000, // ~$5 worth of model credits at 1000 credits = $1
     price: env.stripeTopupMedium,
   },
   "credits-large": {
-    credits: 1000, // ~$10 worth of model credits at 100 credits = $1
+    credits: 10000, // ~$10 worth of model credits at 1000 credits = $1
     price: env.stripeTopupLarge,
   },
 };

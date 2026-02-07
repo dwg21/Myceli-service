@@ -1,14 +1,14 @@
 import { MODEL_CATALOG, getDefaultModelId } from "../config/models.js";
 
-export const CREDITS_PER_USD = 100;
+export const CREDITS_PER_USD = 1000;
 
 const AVG_CHARS_PER_TOKEN = 4;
 
 const TEXT_ACTION_DEFAULTS = {
-  chatMessage: { outputTokens: 350, systemChars: 800 },
-  chatStream: { outputTokens: 350, systemChars: 800 },
-  generateMainIdeas: { outputTokens: 1600, systemChars: 900 },
-  expandIdea: { outputTokens: 1100, systemChars: 1100 },
+  chatMessage: { outputTokens: 220, systemChars: 700 },
+  chatStream: { outputTokens: 220, systemChars: 700 },
+  generateMainIdeas: { outputTokens: 1200, systemChars: 1000 },
+  expandIdea: { outputTokens: 900, systemChars: 1200 },
 };
 
 const PRESET_IMAGE_DEFAULTS = {
