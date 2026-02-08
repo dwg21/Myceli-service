@@ -45,32 +45,32 @@ const resolveFrontendBase = (req) => {
     req?.headers?.referer,
     process.env.CORS_ORIGIN,
     "http://localhost:3000",
-  ].filter(Boolean);
+  ]
+    .filter(Boolean)
+    .flatMap((entry) => entry.split(",").map((s) => s.trim()).filter(Boolean));
 
   const normalize = (value) => {
     try {
-      const origin = new URL(value.split(",")[0].trim()).origin.replace(/\/$/, "");
-      return origin;
+      return new URL(value).origin.replace(/\/$/, "");
     } catch {
       return null;
     }
   };
 
-  const expanded = raw.flatMap((entry) =>
-    entry
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)
-  );
+  const origins = raw.map(normalize).filter(Boolean);
 
-  const all = expanded.map(normalize).filter(Boolean);
-  const nonLocal = all.filter(
-    (u) => !u.includes("localhost") && !u.includes("127.0.0.1"),
-  );
-  const httpsPreferred = (list) =>
-    list.find((u) => u.startsWith("https://")) || list[0];
+  const preferred =
+    origins.find((u) => u.includes("www.myceliapp.com")) ||
+    origins.find((u) => u.includes("myceliapp.com")) ||
+    origins.find(
+      (u) =>
+        u.startsWith("https://") &&
+        !u.includes("localhost") &&
+        !u.includes("127.0.0.1"),
+    ) ||
+    origins[0];
 
-  return httpsPreferred(nonLocal) || httpsPreferred(all) || "http://localhost:3000";
+  return preferred || "http://localhost:3000";
 };
 
 const getPriceIdForPlan = (plan, interval = "monthly") =>

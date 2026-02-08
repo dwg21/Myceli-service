@@ -7,29 +7,35 @@ const resend =
     : null;
 
 const resolveFrontendUrl = () => {
+  // Split comma-separated env values but prefer a single clean prod origin.
   const raw = [];
   if (env.frontendUrl) raw.push(...env.frontendUrl.split(","));
   if (process.env.CORS_ORIGIN) raw.push(...process.env.CORS_ORIGIN.split(","));
-  // always include localhost as ultimate fallback
-  raw.push("http://localhost:3000");
+  raw.push("http://localhost:3000"); // final fallback
 
   const normalize = (value) => {
     try {
-      const origin = new URL(value.trim()).origin.replace(/\/$/, "");
-      return origin;
+      return new URL(value.trim()).origin.replace(/\/$/, "");
     } catch {
       return null;
     }
   };
 
-  const all = raw.map(normalize).filter(Boolean);
-  const nonLocal = all.filter(
-    (u) => !u.includes("localhost") && !u.includes("127.0.0.1"),
-  );
-  const httpsPreferred = (list) =>
-    list.find((u) => u.startsWith("https://")) || list[0];
+  const origins = raw.map(normalize).filter(Boolean);
 
-  return httpsPreferred(nonLocal) || httpsPreferred(all) || "http://localhost:3000";
+  // Preference: primary domain first, then https non-localhost, else anything valid.
+  const preferred =
+    origins.find((u) => u.includes("www.myceliapp.com")) ||
+    origins.find((u) => u.includes("myceliapp.com")) ||
+    origins.find(
+      (u) =>
+        u.startsWith("https://") &&
+        !u.includes("localhost") &&
+        !u.includes("127.0.0.1"),
+    ) ||
+    origins[0];
+
+  return preferred || "http://localhost:3000";
 };
 
 const frontendUrl = resolveFrontendUrl();
