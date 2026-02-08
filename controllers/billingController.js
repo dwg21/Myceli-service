@@ -44,6 +44,9 @@ const resolveFrontendBase = (req) => {
     req?.headers?.origin,
     req?.headers?.referer,
     process.env.CORS_ORIGIN,
+    "https://www.myceliapp.com",
+    "https://myceliapp.com",
+    "https://myceli-app.vercel.app",
     "http://localhost:3000",
   ]
     .filter(Boolean)

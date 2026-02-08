@@ -7,11 +7,17 @@ const resend =
     : null;
 
 const resolveFrontendUrl = () => {
-  // Split comma-separated env values but prefer a single clean prod origin.
   const raw = [];
+  // highest priority: explicit env values
   if (env.frontendUrl) raw.push(...env.frontendUrl.split(","));
   if (process.env.CORS_ORIGIN) raw.push(...process.env.CORS_ORIGIN.split(","));
-  raw.push("http://localhost:3000"); // final fallback
+  // sane defaults: canonical domains, then preview, then localhost
+  raw.push(
+    "https://www.myceliapp.com",
+    "https://myceliapp.com",
+    "https://myceli-app.vercel.app",
+    "http://localhost:3000",
+  );
 
   const normalize = (value) => {
     try {
