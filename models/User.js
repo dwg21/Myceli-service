@@ -42,6 +42,8 @@ const userSchema = new mongoose.Schema({
   termsVersion: { type: String },
   marketingOptIn: { type: Boolean, default: false },
   marketingOptInAt: { type: Date },
+  emailVerified: { type: Boolean, default: false },
+  emailVerifiedAt: { type: Date },
 });
 
 userSchema.pre("save", async function (next) {

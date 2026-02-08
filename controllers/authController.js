@@ -1,4 +1,5 @@
 import User from "../models/User.js";
+import EmailVerificationToken from "../models/EmailVerificationToken.js";
 import { env } from "../config/env.js";
 import {
   issueTokensForUser,
@@ -12,14 +13,25 @@ import PasswordResetToken from "../models/PasswordResetToken.js";
 import {
   sendPasswordResetEmail,
   sendWelcomeEmail,
+  sendEmailVerificationEmail,
 } from "../services/emailService.js";
 
 const RESET_TOKEN_TTL_MINUTES = 60;
+const VERIFY_TOKEN_TTL_MINUTES = 60 * 24; // 24 hours
 
 const buildResetToken = () => {
   const token = crypto.randomBytes(32).toString("hex");
   const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
   const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000);
+  return { token, tokenHash, expiresAt };
+};
+
+const buildVerificationToken = () => {
+  const token = crypto.randomBytes(32).toString("hex");
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  const expiresAt = new Date(
+    Date.now() + VERIFY_TOKEN_TTL_MINUTES * 60 * 1000,
+  );
   return { token, tokenHash, expiresAt };
 };
 
@@ -55,32 +67,95 @@ export const signup = async (req, res) => {
       termsVersion: env.termsVersion,
       marketingOptIn: Boolean(marketingOptIn),
       marketingOptInAt: marketingOptIn ? new Date() : undefined,
+      emailVerified: false,
+      emailVerifiedAt: undefined,
+    });
+
+    const { token, tokenHash, expiresAt } = buildVerificationToken();
+    await EmailVerificationToken.deleteMany({ user: user._id });
+    await EmailVerificationToken.create({
+      user: user._id,
+      tokenHash,
+      expiresAt,
+      used: false,
+    });
+
+    sendEmailVerificationEmail({
+      to: user.email,
+      name: user.name,
+      token,
+      expiresInMinutes: VERIFY_TOKEN_TTL_MINUTES,
+    }).catch((err) => console.error("Verification email error:", err));
+
+    res.status(202).json({
+      message: "Check your email to verify your account.",
+      intent: selectedPlanIntent,
+      userId: user.id,
+    });
+  } catch (err) {
+    console.error("Signup error:", err);
+    res.status(500).json({ error: "Signup failed" });
+  }
+};
+
+/* ---------------- Verify email ---------------- */
+export const verifyEmail = async (req, res) => {
+  const { token } = req.query;
+  if (!token || typeof token !== "string") {
+    return res.status(400).json({ error: "Verification token is required" });
+  }
+
+  try {
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    const record = await EmailVerificationToken.findOne({
+      tokenHash,
+      used: false,
+      expiresAt: { $gt: new Date() },
+    });
+
+    if (!record) {
+      return res.status(400).json({ error: "Invalid or expired token" });
+    }
+
+    const user = await User.findById(record.user);
+    if (!user) {
+      return res.status(400).json({ error: "Invalid token" });
+    }
+
+    user.emailVerified = true;
+    user.emailVerifiedAt = new Date();
+    await user.save();
+
+    record.used = true;
+    record.usedAt = new Date();
+    await record.save();
+    await EmailVerificationToken.deleteMany({
+      user: user._id,
+      _id: { $ne: record._id },
     });
 
     const { accessToken, refreshToken } = await issueTokensForUser(user, req);
     setRefreshCookie(res, refreshToken);
 
-    // Fire-and-forget welcome email; don't block signup if email fails
     sendWelcomeEmail({
       to: user.email,
       name: user.name,
       plan: user.plan,
-      intent: selectedPlanIntent,
+      intent: "free",
     }).catch((err) => console.error("Welcome email error:", err));
 
-    res.json({
+    return res.json({
       accessToken,
       user: {
         id: user.id,
         name: user.name,
         email: user.email,
         role: user.role,
-        plan: user.plan,
+        plan: user.plan || "free",
         planChangeTo: user.planChangeTo,
         planChangeEffectiveAt: user.planChangeEffectiveAt,
         planRenewalAt: user.planRenewalAt,
         creditsBonus: user.creditsBonus,
-        planIntent: selectedPlanIntent,
         marketingOptIn: user.marketingOptIn,
         acceptedTermsAt: user.acceptedTermsAt,
         termsVersion: user.termsVersion,
@@ -92,8 +167,51 @@ export const signup = async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("Signup error:", err);
-    res.status(500).json({ error: "Signup failed" });
+    console.error("Verify email error:", err);
+    res.status(500).json({ error: "Email verification failed" });
+  }
+};
+
+/* ---------------- Resend verification ---------------- */
+export const resendVerification = async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: "Email is required" });
+
+  try {
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.json({
+        message:
+          "If an account exists for that email, a verification email has been sent.",
+      });
+    }
+
+    if (user.emailVerified) {
+      return res.status(400).json({ error: "Email is already verified" });
+    }
+
+    const { token, tokenHash, expiresAt } = buildVerificationToken();
+    await EmailVerificationToken.deleteMany({ user: user._id });
+    await EmailVerificationToken.create({
+      user: user._id,
+      tokenHash,
+      expiresAt,
+      used: false,
+    });
+
+    await sendEmailVerificationEmail({
+      to: user.email,
+      name: user.name,
+      token,
+      expiresInMinutes: VERIFY_TOKEN_TTL_MINUTES,
+    });
+
+    res.json({ message: "Verification email sent" });
+  } catch (err) {
+    console.error("Resend verification error:", err);
+    res
+      .status(500)
+      .json({ error: "Unable to resend verification email right now" });
   }
 };
 
@@ -104,6 +222,12 @@ export const login = async (req, res) => {
     const user = await User.findOne({ email });
     if (!user || !(await user.comparePassword(password))) {
       return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    if (!user.emailVerified) {
+      return res
+        .status(403)
+        .json({ error: "Please verify your email to sign in." });
     }
 
     const { accessToken, refreshToken } = await issueTokensForUser(user, req);

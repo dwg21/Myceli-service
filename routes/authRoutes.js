@@ -8,6 +8,8 @@ import {
   me,
   requestPasswordReset,
   resetPassword,
+  verifyEmail,
+  resendVerification,
 } from "../controllers/authController.js";
 import {
   googleAuth,
@@ -92,6 +94,10 @@ router.post("/logout", logout);
 
 // GET /api/auth/me
 router.get("/me", requireAuth, me);
+
+// Email verification
+router.get("/verify", authLimiter, verifyEmail);
+router.post("/verify/resend", authLimiter, resendVerification);
 
 // OAuth: Google
 router.get("/google", googleAuth);

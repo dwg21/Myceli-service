@@ -90,6 +90,83 @@ export async function sendPasswordResetEmail({
   console.info("Password reset email queued:", data?.id);
 }
 
+export async function sendEmailVerificationEmail({
+  to,
+  name,
+  token,
+  expiresInMinutes,
+}) {
+  if (!resend) {
+    console.warn(
+      "Resend API key missing; skipping verification email dispatch.",
+    );
+    return;
+  }
+
+  const verifyUrl = `${frontendUrl}/auth/verify?token=${encodeURIComponent(
+    token,
+  )}`;
+
+  const text = [
+    `Hi ${name || "there"},`,
+    "",
+    "Confirm your email to activate your Myceli account.",
+    `Click this link to verify (expires in ${expiresInMinutes} minutes):`,
+    verifyUrl,
+    "",
+    "If you didn't sign up, you can ignore this email.",
+    "",
+    "— The Myceli team",
+  ].join("\n");
+
+  const html = `
+    <table cellpadding="0" cellspacing="0" width="100%" style="font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8faf9; padding: 24px 0;">
+      <tr>
+        <td align="center">
+          <table cellpadding="0" cellspacing="0" width="560" style="background: #ffffff; border-radius: 16px; border: 1px solid #e6f2ec; padding: 32px;">
+            <tr>
+              <td style="text-align: left; color: #0a1f14;">
+                <p style="margin: 0 0 8px; letter-spacing: 0.08em; text-transform: uppercase; font-size: 11px; color: #4b5e55;">Confirm your email</p>
+                <h2 style="margin: 0 0 12px; font-size: 24px; color: #0a1f14;">Verify your Myceli account</h2>
+                <p style="margin: 0 0 16px; color: #4b5e55; line-height: 1.6;">
+                  Hi ${name || "there"}, click the button below to confirm your email and activate your account. This link expires in ${expiresInMinutes} minutes.
+                </p>
+                <p style="text-align: center; margin: 24px 0;">
+                  <a href="${verifyUrl}" style="background: #003f36; color: #ffffff; padding: 12px 20px; border-radius: 12px; text-decoration: none; font-weight: 600; display: inline-block;">
+                    Verify email
+                  </a>
+                </p>
+                <p style="margin: 0 0 12px; color: #4b5e55; line-height: 1.6;">
+                  Or copy and paste this link into your browser:<br/>
+                  <span style="color: #0a1f14; word-break: break-all;">${verifyUrl}</span>
+                </p>
+                <p style="margin: 16px 0 0; color: #6b7a72; font-size: 13px; line-height: 1.6;">
+                  If you didn't request this, you can ignore this email.
+                </p>
+              </td>
+            </tr>
+          </table>
+          <p style="color: #8da39a; font-size: 12px; margin: 16px 0 0;">Sent by ${productName} • ${fromEmail}</p>
+        </td>
+      </tr>
+    </table>
+  `;
+
+  const { error } = await resend.emails.send({
+    from: `Myceli Team <${fromEmail}>`,
+    to,
+    subject: "Verify your email for Myceli",
+    text,
+    html,
+  });
+
+  if (error) {
+    console.error("Resend verification email error:", error);
+    throw new Error(error.message || "Resend send failed");
+  }
+  console.info("Verification email queued");
+}
+
 export async function sendWelcomeEmail({ to, name, plan = "free", intent }) {
   if (!resend) {
     console.warn("Resend API key missing; skipping welcome email dispatch.");
