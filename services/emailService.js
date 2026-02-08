@@ -7,35 +7,29 @@ const resend =
     : null;
 
 const resolveFrontendUrl = () => {
-  const candidates = [];
-  if (env.frontendUrl) {
-    candidates.push(
-      ...env.frontendUrl
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
-    );
-  }
-  const corsOrigin = process.env.CORS_ORIGIN;
-  if (corsOrigin) {
-    candidates.push(
-      ...corsOrigin
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
-    );
-  }
-  candidates.push("http://localhost:3000");
+  const raw = [];
+  if (env.frontendUrl) raw.push(...env.frontendUrl.split(","));
+  if (process.env.CORS_ORIGIN) raw.push(...process.env.CORS_ORIGIN.split(","));
+  // always include localhost as ultimate fallback
+  raw.push("http://localhost:3000");
 
-  for (const candidate of candidates) {
+  const normalize = (value) => {
     try {
-      const url = new URL(candidate);
-      return url.origin.replace(/\/$/, "");
+      const origin = new URL(value.trim()).origin.replace(/\/$/, "");
+      return origin;
     } catch {
-      continue;
+      return null;
     }
-  }
-  return "http://localhost:3000";
+  };
+
+  const all = raw.map(normalize).filter(Boolean);
+  const nonLocal = all.filter(
+    (u) => !u.includes("localhost") && !u.includes("127.0.0.1"),
+  );
+  const httpsPreferred = (list) =>
+    list.find((u) => u.startsWith("https://")) || list[0];
+
+  return httpsPreferred(nonLocal) || httpsPreferred(all) || "http://localhost:3000";
 };
 
 const frontendUrl = resolveFrontendUrl();

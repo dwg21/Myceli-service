@@ -39,28 +39,38 @@ const frontendBase = env.frontendUrl || "http://localhost:3000";
 
 // Helper to produce an absolute frontend origin, even if env is missing or malformed.
 const resolveFrontendBase = (req) => {
-  const candidates = [
+  const raw = [
     frontendBase,
     req?.headers?.origin,
-    req?.headers?.referer && (() => {
-      try {
-        return new URL(req.headers.referer).origin;
-      } catch {
-        return null;
-      }
-    })(),
+    req?.headers?.referer,
+    process.env.CORS_ORIGIN,
     "http://localhost:3000",
   ].filter(Boolean);
 
-  for (const candidate of candidates) {
+  const normalize = (value) => {
     try {
-      const url = new URL(candidate);
-      return url.origin.replace(/\/$/, "");
+      const origin = new URL(value.split(",")[0].trim()).origin.replace(/\/$/, "");
+      return origin;
     } catch {
-      continue;
+      return null;
     }
-  }
-  return "http://localhost:3000";
+  };
+
+  const expanded = raw.flatMap((entry) =>
+    entry
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+  );
+
+  const all = expanded.map(normalize).filter(Boolean);
+  const nonLocal = all.filter(
+    (u) => !u.includes("localhost") && !u.includes("127.0.0.1"),
+  );
+  const httpsPreferred = (list) =>
+    list.find((u) => u.startsWith("https://")) || list[0];
+
+  return httpsPreferred(nonLocal) || httpsPreferred(all) || "http://localhost:3000";
 };
 
 const getPriceIdForPlan = (plan, interval = "monthly") =>
