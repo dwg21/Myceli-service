@@ -6,9 +6,39 @@ const resend =
     ? new Resend(env.resendApiKey)
     : null;
 
-const frontendUrl =
-  (env.frontendUrl && env.frontendUrl.replace(/\/$/, "")) ||
-  "http://localhost:3000";
+const resolveFrontendUrl = () => {
+  const candidates = [];
+  if (env.frontendUrl) {
+    candidates.push(
+      ...env.frontendUrl
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    );
+  }
+  const corsOrigin = process.env.CORS_ORIGIN;
+  if (corsOrigin) {
+    candidates.push(
+      ...corsOrigin
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    );
+  }
+  candidates.push("http://localhost:3000");
+
+  for (const candidate of candidates) {
+    try {
+      const url = new URL(candidate);
+      return url.origin.replace(/\/$/, "");
+    } catch {
+      continue;
+    }
+  }
+  return "http://localhost:3000";
+};
+
+const frontendUrl = resolveFrontendUrl();
 
 const fromEmail = env.supportEmail || "support@myceliapp.com";
 const productName = "Myceli";

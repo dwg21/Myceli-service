@@ -37,6 +37,32 @@ const ACTIVE_SUB_STATUSES = new Set([
 ]);
 const frontendBase = env.frontendUrl || "http://localhost:3000";
 
+// Helper to produce an absolute frontend origin, even if env is missing or malformed.
+const resolveFrontendBase = (req) => {
+  const candidates = [
+    frontendBase,
+    req?.headers?.origin,
+    req?.headers?.referer && (() => {
+      try {
+        return new URL(req.headers.referer).origin;
+      } catch {
+        return null;
+      }
+    })(),
+    "http://localhost:3000",
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      const url = new URL(candidate);
+      return url.origin.replace(/\/$/, "");
+    } catch {
+      continue;
+    }
+  }
+  return "http://localhost:3000";
+};
+
 const getPriceIdForPlan = (plan, interval = "monthly") =>
   PLAN_TO_PRICE[plan]?.[interval];
 const getPlanForPrice = (priceId) => PRICE_TO_PLAN[priceId];
@@ -263,10 +289,10 @@ export const createCheckoutSession = async (req, res) => {
       allow_promotion_codes: true,
       success_url:
         successUrl ||
-        `${frontendBase.replace(/\/$/, "")}/workspace/settings?billing=success`,
+        `${resolveFrontendBase(req)}/workspace/settings?billing=success`,
       cancel_url:
         cancelUrl ||
-        `${frontendBase.replace(/\/$/, "")}/workspace/settings?billing=cancelled`,
+        `${resolveFrontendBase(req)}/workspace/settings?billing=cancelled`,
       metadata: {
         userId: user.id,
         plan,
@@ -303,7 +329,7 @@ export const createPortalSession = async (req, res) => {
     const session = await stripe.billingPortal.sessions.create({
       customer: user.stripeCustomerId,
       return_url:
-        returnUrl || `${frontendBase.replace(/\/$/, "")}/workspace/settings`,
+        returnUrl || `${resolveFrontendBase(req)}/workspace/settings`,
     });
 
     res.json({ url: session.url });
@@ -344,10 +370,10 @@ export const createTopupSession = async (req, res) => {
       allow_promotion_codes: true,
       success_url:
         successUrl ||
-        `${frontendBase.replace(/\/$/, "")}/workspace/settings?topup=success`,
+        `${resolveFrontendBase(req)}/workspace/settings?topup=success`,
       cancel_url:
         cancelUrl ||
-        `${frontendBase.replace(/\/$/, "")}/workspace/settings?topup=cancelled`,
+        `${resolveFrontendBase(req)}/workspace/settings?topup=cancelled`,
       metadata: {
         userId: user.id,
         packId,
