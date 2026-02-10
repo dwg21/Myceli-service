@@ -6,6 +6,7 @@ import {
   issueTokensForUser,
   setRefreshCookie,
 } from "../services/tokenService.js";
+import { buildEmailLookup, normalizeEmail } from "../utils/email.js";
 
 const originFromUrl = (value) => {
   try {
@@ -110,23 +111,25 @@ const ensureProviderConfig = (provider) => {
 };
 
 const upsertUserFromProfile = async (provider, profile) => {
+  const normalizedProfileEmail = normalizeEmail(profile.email);
+  const emailLookup = buildEmailLookup(normalizedProfileEmail);
   const providerFilter = {
     providers: { $elemMatch: { provider, providerId: profile.id } },
   };
   let user =
     (await User.findOne(providerFilter)) ||
-    (profile.email ? await User.findOne({ email: profile.email }) : null);
+    (emailLookup ? await User.findOne({ email: emailLookup }) : null);
 
   if (!user) {
     user = await User.create({
       name: profile.name || profile.email || provider,
-      email: profile.email || `${provider}-${profile.id}@example.com`,
+      email: normalizedProfileEmail || `${provider}-${profile.id}@example.com`,
       password: randomUUID(), // random placeholder; not used for OAuth sign-in
       providers: [
         {
           provider,
           providerId: profile.id,
-          email: profile.email,
+          email: normalizedProfileEmail || undefined,
           avatar: profile.avatar,
           displayName: profile.name,
         },
@@ -142,7 +145,7 @@ const upsertUserFromProfile = async (provider, profile) => {
         {
           provider,
           providerId: profile.id,
-          email: profile.email,
+          email: normalizedProfileEmail || undefined,
           avatar: profile.avatar,
           displayName: profile.name,
         },

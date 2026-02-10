@@ -4,7 +4,7 @@ import { getPlanCredits, getNextPeriodEnd } from "../utils/planCredits.js";
 
 const userSchema = new mongoose.Schema({
   name: String,
-  email: { type: String, required: true, unique: true },
+  email: { type: String, required: true, unique: true, trim: true, lowercase: true },
   password: { type: String, required: true },
   role: { type: String, enum: ["user", "admin"], default: "user" },
   plan: { type: String, enum: ["free", "basic", "pro"], default: "free" },

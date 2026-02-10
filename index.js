@@ -13,11 +13,23 @@ import { errorHandler } from "./middleware/error.js";
 import { connectDB } from "./config/db.js"; // ✅ import your DB connector
 import { startCreditResetScheduler } from "./services/creditResetService.js";
 import { handleStripeWebhook } from "./controllers/billingController.js";
+import {
+  applySecurityHeaders,
+  blockObviousBotUserAgents,
+  blockSensitivePathProbes,
+} from "./middleware/security.js";
+import { apiLimiter } from "./middleware/rateLimit.js";
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 6501;
+app.set("trust proxy", 1);
+
+/* ---------------- Security ---------------- */
+app.use(applySecurityHeaders);
+app.use(blockSensitivePathProbes);
+app.use(blockObviousBotUserAgents);
 
 /* ---------------- Timing Logger ---------------- */
 app.use((req, res, next) => {
@@ -63,6 +75,7 @@ app.post(
   express.raw({ type: "application/json" }),
   handleStripeWebhook
 );
+app.use("/api", apiLimiter);
 app.use(express.json({ limit: "25mb" }));
 app.use(cookieParser());
 

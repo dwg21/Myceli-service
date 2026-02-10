@@ -15,6 +15,7 @@ import {
   sendWelcomeEmail,
   sendEmailVerificationEmail,
 } from "../services/emailService.js";
+import { buildEmailLookup, normalizeEmail } from "../utils/email.js";
 
 const RESET_TOKEN_TTL_MINUTES = 60;
 const VERIFY_TOKEN_TTL_MINUTES = 60 * 24; // 24 hours
@@ -40,6 +41,8 @@ export const signup = async (req, res) => {
   try {
     const { name, email, password, plan, acceptedTerms, marketingOptIn } =
       req.body;
+    const normalizedEmail = normalizeEmail(email);
+    const emailLookup = buildEmailLookup(normalizedEmail);
 
     if (!acceptedTerms) {
       return res
@@ -47,7 +50,7 @@ export const signup = async (req, res) => {
         .json({ error: "Terms must be accepted to sign up" });
     }
 
-    const exists = await User.findOne({ email });
+    const exists = emailLookup ? await User.findOne({ email: emailLookup }) : null;
     if (exists)
       return res.status(409).json({ error: "Email already registered" });
 
@@ -56,7 +59,7 @@ export const signup = async (req, res) => {
 
     const user = await User.create({
       name,
-      email,
+      email: normalizedEmail,
       password,
       plan: "free", // paid plans activate after Stripe webhook
       creditsTotal: undefined, // use schema default per plan
@@ -175,10 +178,13 @@ export const verifyEmail = async (req, res) => {
 /* ---------------- Resend verification ---------------- */
 export const resendVerification = async (req, res) => {
   const { email } = req.body;
-  if (!email) return res.status(400).json({ error: "Email is required" });
+  const normalizedEmail = normalizeEmail(email);
+  const emailLookup = buildEmailLookup(normalizedEmail);
+  if (!normalizedEmail)
+    return res.status(400).json({ error: "Email is required" });
 
   try {
-    const user = await User.findOne({ email });
+    const user = emailLookup ? await User.findOne({ email: emailLookup }) : null;
     if (!user) {
       return res.json({
         message:
@@ -219,7 +225,9 @@ export const resendVerification = async (req, res) => {
 export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
-    const user = await User.findOne({ email });
+    const normalizedEmail = normalizeEmail(email);
+    const emailLookup = buildEmailLookup(normalizedEmail);
+    const user = emailLookup ? await User.findOne({ email: emailLookup }) : null;
     if (!user || !(await user.comparePassword(password))) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
@@ -335,13 +343,15 @@ export const me = async (req, res) => {
 /* ---------------- Request password reset ---------------- */
 export const requestPasswordReset = async (req, res) => {
   const { email } = req.body;
+  const normalizedEmail = normalizeEmail(email);
+  const emailLookup = buildEmailLookup(normalizedEmail);
   const genericResponse = {
     message:
       "If an account exists for that email, we'll send reset instructions.",
   };
 
   try {
-    const user = await User.findOne({ email });
+    const user = emailLookup ? await User.findOne({ email: emailLookup }) : null;
     if (!user) {
       return res.json(genericResponse);
     }
